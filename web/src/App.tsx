@@ -1,0 +1,516 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  addProtocol, setWorkerUrl, LngLatBounds, Map as MlMap, NavigationControl, Popup, ScaleControl,
+  type MapGeoJSONFeature,
+} from "maplibre-gl";
+import { Protocol } from "pmtiles";
+import "maplibre-gl/dist/maplibre-gl.css";
+// Bundle MapLibre's module worker (and its shared chunk) so it works in dev and production builds
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
+
+import { BASEMAP_STYLE, COLORS, DATA, DEFAULT_PLACE, INITIAL_VIEW, NAIP_YEARS, YEAR_MAX, YEAR_MIN } from "./config";
+import {
+  addDataLayers, applyYear, BUILDING_USES, COUNTY_METRICS, setCountyMetric, setNaip, setVisibility,
+  type BuildingUse, type CountyMetric, type ExtraData, type FireWindow, type LayerKey, type Visibility,
+} from "./layers";
+import Report from "./components/Report";
+import type { Context, PlaceMetrics, Recommend, Stats } from "./types";
+
+setWorkerUrl(maplibreWorkerUrl);
+const protocol = new Protocol();
+addProtocol("pmtiles", protocol.tile);
+
+const esc = (s: unknown) =>
+  String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+const LAYER_LABELS: [LayerKey, string, string][] = [
+  ["naip", "Aerial imagery (NAIP)", "USDA NAIP via Planetary Computer, zoom in to view"],
+  ["buildings", "Buildings by year built", "Overture Maps + County Assessor + Microsoft 2020"],
+  ["arrows", "Growth direction arrows", "Where homes built in the last 5 years went, vs existing homes"],
+  ["recommend", "Where to build next (2026+)", "Growth momentum × open land × next to town × fire risk"],
+  ["fires", "Fire perimeters", "NIFC interagency fire history"],
+  ["firms", "Fire detection heatmap", "NASA FIRMS MODIS, 2001–2025"],
+  ["fhsz", "Fire Hazard Severity Zones", "CAL FIRE, SRA 2024 / LRA 2025"],
+  ["places", "Cities & growth choropleth", "Census TIGER places"],
+  ["counties", "County comparison (statewide)", "Insurance: HearthMap/NBER · Crime: CA DOJ OpenJustice"],
+];
+
+function pointInRing([x, y]: number[], ring: number[][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+function recPopup(cell: MapGeoJSONFeature | undefined, zone: { properties: unknown } | undefined) {
+  const c = (cell?.properties ?? {}) as Record<string, number | string>;
+  const z = (zone?.properties ?? {}) as Record<string, number | string>;
+  const pct = (v: unknown) => `${Math.round(Number(v) * 100)}%`;
+  const head = zone ? `#${esc(z.rank)} ${esc(z.label)}` : "Development suitability";
+  const zoneRows = zone ? `<tr><th>Zone size</th><td>${Number(z.acres).toLocaleString()} acres mostly open</td></tr>` : "";
+  const cellRows = cell ? `
+    <tr><th>Cell score</th><td><b>${esc(c.score)}</b> / 100</td></tr>
+    <tr><th>Growth momentum</th><td>${pct(c.momentum)}</td></tr>
+    <tr><th>Next to town</th><td>${pct(c.adjacency)}</td></tr>
+    <tr><th>Open land</th><td>${Number(c.room) === 1 ? "Yes" : Number(c.room) > 0 ? "Partly built" : "Built up"}</td></tr>
+    <tr><th>Fire risk</th><td>${pct(c.fire_risk)}${c.fhsz_class && c.fhsz_class !== "None" ? ` · FHSZ ${esc(c.fhsz_class)}` : ""}</td></tr>` : "";
+  return `<div class="pop"><h4>${head}</h4><table>${zoneRows}${cellRows}</table>
+    <div class="pop-id">500 m cell. Score = 100 × momentum × open land × next to town × (1 − 0.8 × fire risk).</div></div>`;
+}
+
+function arrowPopup(f: MapGeoJSONFeature) {
+  const p = f.properties as Record<string, string | number>;
+  const text = p.kind === "infill"
+    ? `Infill: ${Number(p.new_homes).toLocaleString()} homes built ${esc(p.window)} inside existing development.`
+    : `${Number(p.new_homes).toLocaleString()} homes built ${esc(p.window)}, centered <b>${esc(p.shift_km)} km
+       ${esc(p.direction)}</b> of the existing homes within 2 km.`;
+  return `<div class="pop"><h4>Growth area · ${esc(p.name)}</h4><p class="pop-text">${text}</p>
+    <div class="pop-id">One arrow per cluster of new homes. Direction is to scale; length is clamped
+    for readability; width grows with the number of homes.</div></div>`;
+}
+
+function countyPopup(f: MapGeoJSONFeature, ctx: Context | null) {
+  const p = f.properties as Record<string, string | number | null>;
+  const n = (v: unknown, d = 1) => (v === null || v === undefined || v === "" ? "–" : Number(v).toFixed(d));
+  const total = ctx?.state.counties ?? 58;
+  return `<div class="pop"><h4>${esc(p.county)} County</h4><table>
+    <tr><th>Home insurance (2024)</th><td>${p.premium ? "$" + Number(p.premium).toLocaleString() + "/yr" : "no data"}
+      ${p.premium_rank ? ` · #${p.premium_rank} of ${ctx?.state.premium_counties ?? 57}` : ""}</td></tr>
+    <tr><th>Violent crime / 1k</th><td>${n(p.violent_per_1k)} · #${esc(p.violent_rank)} of ${total}</td></tr>
+    <tr><th>Property crime / 1k</th><td>${n(p.property_per_1k)} · #${esc(p.property_rank)} of ${total}</td></tr>
+    <tr><th>Crime change 2015–25</th><td>${n(p.crime_change_10yr_pct)}%</td></tr></table>
+    <div class="pop-id">Rank 1 = highest. Crime excludes railroad police.</div></div>`;
+}
+
+function bboxOf(geom: GeoJSON.Geometry): LngLatBounds {
+  const b = new LngLatBounds();
+  const walk = (c: unknown): void => {
+    if (Array.isArray(c) && typeof c[0] === "number") b.extend(c as [number, number]);
+    else if (Array.isArray(c)) c.forEach(walk);
+  };
+  walk((geom as GeoJSON.Polygon).coordinates);
+  return b;
+}
+
+function buildingPopup(f: MapGeoJSONFeature) {
+  const p = f.properties as Record<string, string | number>;
+  const yearText =
+    p.ys === "assessor" ? `${p.y}` : p.ys === "new" ? "After 2020 (est.)" : "Before 2020 (year unknown)";
+  const source =
+    p.ys === "assessor" ? "County assessor" : p.ys === "new" ? "Not in Microsoft 2020 footprints" : "In Microsoft 2020 footprints";
+  const sqft = p.area_m2 ? Math.round(Number(p.area_m2) * 10.764).toLocaleString() : "–";
+  const rows: [string, string][] = [
+    ["Year built", yearText],
+    ["Year source", source],
+    ["Use", String(p.use || p.category || "–")],
+    ["Units", p.units ? String(p.units) : "–"],
+    ["Footprint", `${sqft} sq ft`],
+    ["Height", p.h ? `${Number(p.h).toFixed(1)} m` : "–"],
+    ["Outline from", String(p.src ?? "–")],
+  ];
+  return `<div class="pop"><h4>Building</h4><table>${rows
+    .map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`)
+    .join("")}</table><div class="pop-id">Overture ID ${esc(p.id)}</div></div>`;
+}
+
+function firePopup(f: MapGeoJSONFeature) {
+  const p = f.properties as Record<string, string | number>;
+  return `<div class="pop"><h4>${esc(p.name || "Unnamed fire")}</h4><table>
+    <tr><th>Year</th><td>${esc(p.year)}</td></tr>
+    <tr><th>Size</th><td>${Number(p.acres || 0).toLocaleString()} acres</td></tr>
+    <tr><th>Agency</th><td>${esc(p.agency || "–")}</td></tr></table></div>`;
+}
+
+export default function App() {
+  const mapDiv = useRef<HTMLDivElement>(null);
+  const cmpDiv = useRef<HTMLDivElement>(null);
+  const map = useRef<MlMap | null>(null);
+  const cmpMap = useRef<MlMap | null>(null);
+  const [ready, setReady] = useState(false);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [placesFc, setPlacesFc] = useState<GeoJSON.FeatureCollection | null>(null);
+  const [year, setYear] = useState(YEAR_MAX - 1); // start on the last complete year
+  const [playing, setPlaying] = useState(false);
+  const [fireWindow, setFireWindow] = useState<FireWindow>("all");
+  const [vis, setVis] = useState<Visibility>({
+    naip: false, buildings: true, arrows: true, fires: true, firms: false, fhsz: true, places: true,
+    counties: true, recommend: true,
+  });
+  const [recommend, setRecommend] = useState<Recommend | null>(null);
+  const [buildingUse, setBuildingUse] = useState<BuildingUse>("all");
+  const [extra, setExtra] = useState<ExtraData | null>(null);
+  const [context, setContext] = useState<Context | null>(null);
+  const [countyMetric, setCountyMetricState] = useState<CountyMetric>("premium");
+  const [naipShown, setNaipShown] = useState<number | null>(null);
+  const [naipError, setNaipError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [compare, setCompare] = useState(false);
+  const [compareYear, setCompareYear] = useState(2012);
+  const [swipe, setSwipe] = useState(0.5);
+  const [zoom, setZoom] = useState(INITIAL_VIEW.zoom);
+  const [cmpReady, setCmpReady] = useState(false);
+
+  const places: PlaceMetrics[] = (placesFc?.features ?? []).map((f: GeoJSON.Feature) => f.properties as PlaceMetrics);
+
+  // load summary data
+  useEffect(() => {
+    const get = (u: string) => fetch(u).then((r) => r.json());
+    Promise.all([get(DATA.stats), get(DATA.places), get(DATA.counties), get(DATA.arrows), get(DATA.context),
+      get(DATA.recCells), get(DATA.recZones), get(DATA.recommend)]).then(
+      ([s, p, c, a, ctx, rc, rz, rec]) => {
+        setStats(s);
+        const recLabels: GeoJSON.FeatureCollection = {
+          type: "FeatureCollection",
+          features: (rec as Recommend).zones.map((z) => ({
+            type: "Feature", properties: { rank: z.rank }, geometry: { type: "Point", coordinates: [z.lon, z.lat] },
+          })),
+        };
+        setExtra({ counties: c, arrows: a, recCells: rc, recZones: rz, recLabels });
+        setRecommend(rec);
+        setContext(ctx);
+        setPlacesFc(p);
+      },
+    );
+  }, []);
+
+  // create main map
+  useEffect(() => {
+    if (!placesFc || !extra || map.current || !mapDiv.current) return;
+    const m = new MlMap({
+      container: mapDiv.current, style: BASEMAP_STYLE, center: INITIAL_VIEW.center, zoom: INITIAL_VIEW.zoom,
+      attributionControl: { compact: true },
+    });
+    map.current = m;
+    if (import.meta.env.DEV) (window as unknown as { __map: MlMap }).__map = m; // debugging handle
+    m.addControl(new NavigationControl({ showCompass: false }), "top-right");
+    m.addControl(new ScaleControl({ unit: "imperial" }), "bottom-right");
+    m.on("load", () => {
+      addDataLayers(m, placesFc, true, extra);
+      setReady(true);
+    });
+    m.on("zoom", () => setZoom(m.getZoom()));
+
+    const popup = new Popup({ maxWidth: "300px" });
+    const clickable = ["buildings-fill", "arrows-minor", "arrows-major", "arrows-minor-infill", "arrows-major-infill",
+      "rec-cells", "fires-fill", "places-fill", "counties-fill"];
+    m.on("click", (e) => {
+      const feats = m.queryRenderedFeatures(e.point, { layers: clickable.filter((l) => m.getLayer(l)) });
+      const hit = (...ids: string[]) => feats.find((f) => ids.includes(f.layer.id));
+      const b = hit("buildings-fill");
+      const arrow = hit("arrows-minor", "arrows-major", "arrows-minor-infill", "arrows-major-infill");
+      const recCell = hit("rec-cells");
+      const fire = hit("fires-fill");
+      const place = m.getZoom() >= 9.5 ? hit("places-fill") : undefined;
+      const county = hit("counties-fill");
+      if (b) popup.setLngLat(e.lngLat).setHTML(buildingPopup(b)).addTo(m);
+      else if (arrow) popup.setLngLat(e.lngLat).setHTML(arrowPopup(arrow)).addTo(m);
+      else if (recCell) {
+        const zone = m.getSource("rec-zones")
+          ? m.querySourceFeatures("rec-zones").find((z) => {
+            const g = z.geometry as GeoJSON.Polygon;
+            return g && pointInRing([e.lngLat.lng, e.lngLat.lat], g.coordinates?.[0] ?? []);
+          })
+          : undefined;
+        popup.setLngLat(e.lngLat).setHTML(recPopup(recCell, zone)).addTo(m);
+      }
+      else if (fire) popup.setLngLat(e.lngLat).setHTML(firePopup(fire)).addTo(m);
+      else if (place) setSelected(String(place.properties.GEOID));
+      else if (county) popup.setLngLat(e.lngLat).setHTML(countyPopup(county, contextRef.current)).addTo(m);
+    });
+    clickable.forEach((l) => {
+      m.on("mouseenter", l, () => (m.getCanvas().style.cursor = "pointer"));
+      m.on("mouseleave", l, () => (m.getCanvas().style.cursor = ""));
+    });
+    return () => {
+      m.remove();
+      map.current = null;
+    };
+  }, [placesFc, extra]);
+
+  const contextRef = useRef<Context | null>(null);
+  contextRef.current = context;
+
+  // statewide county comparison metric
+  useEffect(() => {
+    if (ready && map.current) setCountyMetric(map.current, countyMetric);
+  }, [ready, countyMetric]);
+
+  // default selection
+  useEffect(() => {
+    if (ready && places.length && selected === null) {
+      const d = places.find((p) => p.name === DEFAULT_PLACE);
+      if (d) setSelected(d.GEOID);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, placesFc]);
+
+  // year / fire window
+  useEffect(() => {
+    if (!ready || !map.current) return;
+    applyYear(map.current, year, fireWindow, buildingUse);
+  }, [ready, year, fireWindow, buildingUse]);
+
+  // layer visibility
+  useEffect(() => {
+    if (ready && map.current) setVisibility(map.current, vis);
+  }, [ready, vis]);
+
+  // NAIP imagery follows the slider year
+  useEffect(() => {
+    if (!ready || !map.current) return;
+    setNaip(map.current, year, vis.naip || compare)
+      .then((v) => {
+        setNaipShown(vis.naip || compare ? v : null);
+        setNaipError(null);
+      })
+      .catch((e) => setNaipError(String(e.message ?? e)));
+  }, [ready, year, vis.naip, compare]);
+
+  // selected place: highlight + zoom
+  const prevSel = useRef<string | null>(null);
+  useEffect(() => {
+    const m = map.current;
+    if (!ready || !m || !placesFc) return;
+    if (prevSel.current) m.setFeatureState({ source: "places", id: prevSel.current }, { selected: false });
+    prevSel.current = selected;
+    if (!selected) {
+      m.flyTo({ center: INITIAL_VIEW.center, zoom: INITIAL_VIEW.zoom });
+      return;
+    }
+    m.setFeatureState({ source: "places", id: selected }, { selected: true });
+    const f = placesFc.features.find((x: GeoJSON.Feature) => x.properties?.GEOID === selected);
+    if (f) m.fitBounds(bboxOf(f.geometry), { padding: 60, maxZoom: 14, duration: 1200 });
+  }, [ready, selected, placesFc]);
+
+  // play animation
+  useEffect(() => {
+    if (!playing) return;
+    const t = setInterval(() => {
+      setYear((y) => {
+        if (y >= YEAR_MAX) {
+          setPlaying(false);
+          return y;
+        }
+        return y + 1;
+      });
+    }, 900);
+    return () => clearInterval(t);
+  }, [playing]);
+
+  // compare (swipe) map
+  useEffect(() => {
+    const m = map.current;
+    if (!compare || !ready || !m || !cmpDiv.current || !placesFc) return;
+    const c = new MlMap({
+      container: cmpDiv.current, style: BASEMAP_STYLE, center: m.getCenter(), zoom: m.getZoom(),
+      interactive: false, attributionControl: false,
+    });
+    cmpMap.current = c;
+    const sync = () => c.jumpTo({ center: m.getCenter(), zoom: m.getZoom(), bearing: m.getBearing(), pitch: m.getPitch() });
+    m.on("move", sync);
+    c.on("load", () => {
+      addDataLayers(c, placesFc, false);
+      c.setLayoutProperty("firms-heat", "visibility", "none");
+      c.setLayoutProperty("fhsz-fill", "visibility", "none");
+      c.setLayoutProperty("fires-fill", "visibility", "none");
+      c.setLayoutProperty("fires-line", "visibility", "none");
+      setCmpReady(true);
+    });
+    if (m.getZoom() < 13.5) m.easeTo({ zoom: 14.5 });
+    return () => {
+      m.off("move", sync);
+      c.remove();
+      cmpMap.current = null;
+      setCmpReady(false);
+    };
+  }, [compare, ready, placesFc]);
+
+  useEffect(() => {
+    const c = cmpMap.current;
+    if (!compare || !cmpReady || !c) return;
+    applyYear(c, compareYear, fireWindow);
+    setNaip(c, compareYear, true).catch(() => undefined);
+  }, [compare, cmpReady, compareYear, fireWindow]);
+
+  const onSwipeDrag = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const el = e.currentTarget.parentElement!;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent) => {
+      const r = el.getBoundingClientRect();
+      setSwipe(Math.min(0.98, Math.max(0.02, (ev.clientX - r.left) / r.width)));
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }, []);
+
+  const toggle = (k: LayerKey) => setVis((v) => ({ ...v, [k]: !v[k] }));
+
+  return (
+    <div className="app">
+      <aside className="side">
+        <div className="brand">
+          <h1>CA Development Explorer</h1>
+          <p>Where California is building, and how close it is to wildfire.</p>
+        </div>
+
+        <section>
+          <h3>Layers</h3>
+          {LAYER_LABELS.map(([k, label, src]) => (
+            <label key={k} className="layer">
+              <input type="checkbox" checked={vis[k] || (k === "naip" && compare)} disabled={k === "naip" && compare}
+                onChange={() => toggle(k)} />
+              <span>
+                {label}
+                <small>{src}</small>
+              </span>
+            </label>
+          ))}
+          {(vis.naip || compare) && (
+            <div className="note">
+              {naipError ? `Imagery unavailable: ${naipError}` :
+                zoom < 11 ? "Zoom in to see aerial imagery." :
+                naipShown ? `Showing NAIP ${naipShown} (nearest flight at or before ${year}).` : "Loading imagery…"}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <h3>Buildings shown</h3>
+          <div className="seg">
+            {BUILDING_USES.map(([k, l]) => (
+              <button key={k} className={buildingUse === k ? "on" : ""} onClick={() => setBuildingUse(k)}>{l}</button>
+            ))}
+          </div>
+          <div className="caption">Use comes from the county assessor parcel. “Other” = agricultural, public,
+            institutional, and buildings with no parcel match.</div>
+        </section>
+
+        <section>
+          <h3>Fire history shown</h3>
+          <div className="seg">
+            {([["all", "All to date"], ["10y", "Last 10 yrs"], ["year", "Selected year"]] as [FireWindow, string][]).map(
+              ([k, l]) => (
+                <button key={k} className={fireWindow === k ? "on" : ""} onClick={() => setFireWindow(k)}>{l}</button>
+              ),
+            )}
+          </div>
+        </section>
+
+        {vis.counties && (
+          <section>
+            <h3>County comparison shows</h3>
+            <div className="seg">
+              {([["premium", "Insurance"], ["violent_per_1k", "Violent crime"], ["property_per_1k", "Property crime"]] as
+                [CountyMetric, string][]).map(([k, l]) => (
+                <button key={k} className={countyMetric === k ? "on" : ""} onClick={() => setCountyMetricState(k)}>{l}</button>
+              ))}
+            </div>
+            {zoom > 8.5 && <div className="note">Zoom out to see all counties.</div>}
+          </section>
+        )}
+
+        <section>
+          <h3>Before / after</h3>
+          <label className="layer">
+            <input type="checkbox" checked={compare} onChange={() => setCompare((c) => !c)} />
+            <span>Swipe compare<small>Left: compare year · Right: slider year</small></span>
+          </label>
+          {compare && (
+            <div className="seg">
+              {NAIP_YEARS.map((y) => (
+                <button key={y} className={compareYear === y ? "on" : ""} onClick={() => setCompareYear(y)}>{y}</button>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="legend">
+          <h3>Legend</h3>
+          <div className="legend-title">Buildings: year built</div>
+          <div className="ramp" style={{
+            background: `linear-gradient(90deg, ${COLORS.buildingRamp.map(([, c]) => c).join(",")})`,
+          }} />
+          <div className="ramp-labels"><span>≤1950</span><span>1980</span><span>2000</span><span>2025</span></div>
+          <div className="sw"><i style={{ background: COLORS.builtThisYear }} />Built in {year}</div>
+          <div className="sw"><i style={{ background: COLORS.buildingUnknown }} />Pre-2020, year unknown</div>
+          <div className="legend-title">Fire perimeters</div>
+          <div className="ramp" style={{ background: `linear-gradient(90deg, ${COLORS.fireOld}, ${COLORS.fireRecent})` }} />
+          <div className="ramp-labels"><span>Older</span><span>Recent</span></div>
+          <div className="legend-title">Fire Hazard Severity Zones</div>
+          {Object.entries(COLORS.hazard).map(([k, c]) => (
+            <div key={k} className="sw"><i style={{ background: c }} />{k}</div>
+          ))}
+          <div className="legend-title">Cities: 10-yr residential growth</div>
+          <div className="ramp" style={{
+            background: `linear-gradient(90deg, ${COLORS.growthRamp.map(([, c]) => c).join(",")})`,
+          }} />
+          <div className="ramp-labels"><span>0%</span><span>10%</span><span>25%</span><span>60%+</span></div>
+          <div className="legend-title">Growth direction</div>
+          <div className="sw"><i className="arrow-sw" />New homes (last 5 yrs) vs existing</div>
+          <div className="legend-title">Where to build next: suitability</div>
+          <div className="ramp" style={{
+            background: `linear-gradient(90deg, ${COLORS.suitRamp.map(([, c]) => c).join(",")})`,
+          }} />
+          <div className="ramp-labels"><span>Low</span><span>Medium</span><span>High</span></div>
+          <div className="sw"><i style={{ border: `2px dashed ${COLORS.suitDark}`, background: "transparent" }} />Ranked zone (number = rank)</div>
+          {vis.counties && (
+            <>
+              <div className="legend-title">Counties: {COUNTY_METRICS[countyMetric].label}</div>
+              <div className="ramp" style={{
+                background: `linear-gradient(90deg, ${COUNTY_METRICS[countyMetric].stops.map(([, c]) => c).join(",")})`,
+              }} />
+              <div className="ramp-labels">
+                {COUNTY_METRICS[countyMetric].stops.filter((_, i) => i % 2 === 0).map(([v]) => (
+                  <span key={v}>{COUNTY_METRICS[countyMetric].fmt(v)}</span>
+                ))}
+              </div>
+            </>
+          )}
+        </section>
+      </aside>
+
+      <main className="mapwrap">
+        <div ref={mapDiv} className="map" />
+        {compare && (
+          <>
+            <div ref={cmpDiv} className="map cmp" style={{ clipPath: `inset(0 ${(1 - swipe) * 100}% 0 0)` }} />
+            <div className="swipe" style={{ left: `${swipe * 100}%` }}>
+              <div className="swipe-handle" onPointerDown={onSwipeDrag}>⇔</div>
+            </div>
+            <div className="cmp-tag left">{compareYear}</div>
+            <div className="cmp-tag right">{year}</div>
+          </>
+        )}
+        {zoom < 12 && vis.buildings && <div className="hint">Zoom in to see individual buildings</div>}
+
+        <div className="timebar">
+          <button className="play" onClick={() => {
+            if (!playing && year >= YEAR_MAX) setYear(YEAR_MIN);
+            setPlaying((p) => !p);
+          }} aria-label={playing ? "Pause" : "Play"}>{playing ? "❚❚" : "▶"}</button>
+          <div className="year">{year}</div>
+          <input type="range" min={YEAR_MIN} max={YEAR_MAX} value={year}
+            onChange={(e) => { setPlaying(false); setYear(Number(e.target.value)); }} aria-label="Year" />
+          <div className="ticks">
+            {Array.from({ length: Math.floor((YEAR_MAX - YEAR_MIN) / 5) + 1 }, (_, i) => YEAR_MIN + i * 5).map((y) => (
+              <span key={y} style={{ left: `${((y - YEAR_MIN) / (YEAR_MAX - YEAR_MIN)) * 100}%` }}>{y}</span>
+            ))}
+          </div>
+        </div>
+      </main>
+
+      {stats && (
+        <Report stats={stats} places={places} selected={selected} year={year} context={context}
+          arrows={extra?.arrows ?? null} recommend={recommend}
+          onZone={(lon, lat) => map.current?.flyTo({ center: [lon, lat], zoom: 12.5, duration: 1200 })}
+          onSelect={setSelected} onPickYear={(y) => { setPlaying(false); setYear(y); }} />
+      )}
+    </div>
+  );
+}
