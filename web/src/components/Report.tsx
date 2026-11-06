@@ -110,8 +110,8 @@ export default function Report({ stats, places, selected, year, context, arrows,
                 share at {recommend.terrain.slope_ok_pct}–{recommend.terrain.slope_max_pct}% (hillside, costly grading).
                 Steeper land doesn't count. Slope from {recommend.terrain.dem} elevation.</li>
               <li><b>Next to town:</b> within 1 km of built-up land, fading to zero at 4 km.</li>
-              <li><b>Fire risk:</b> hazard zone at the cell (50%), share of land within 5 km burned since 2000 (30%),
-                wildland satellite fire detections within 5 km (20%).</li>
+              <li><b>Fire risk:</b> {recommend.fire_method} History and detections use a 5 km ring around each
+                cell, and the backtest only uses fires known at the time.</li>
               <li><b>Excluded:</b> the Delta Primary Zone (Delta Protection Act; {fmt(recommend.excluded.delta_primary_zone_cells)} cells),
                 mostly-water cells, and {fmt(recommend.excluded.too_steep_cells)} cells that are too steep (under 20% flat land).</li>
             </ul>
@@ -224,6 +224,27 @@ export default function Report({ stats, places, selected, year, context, arrows,
             note={`NASA FIRMS 2001–25, inside hazard zones (${fmt(area.firms_10km_since_2001)} incl. farm burning)`} />
           <Kpi label="Area in High/Very High FHSZ" value={pct(area.fhsz_high_vhigh_share)} />
           <Kpi label="Buildings in any hazard zone" value={pct(area.buildings_in_fhsz_share)} />
+        </div>
+        <div className="chart-title">Fire history (frequency &amp; recency, 10 km)</div>
+        <div className="kpis">
+          <Kpi label="Most recent fire nearby"
+            value={area.last_fire_year ? `${area.last_fire_year}` : "None on record"}
+            note={area.last_fire_name ? `${area.last_fire_name} · ${fmt(area.fires_on_record)} fires (10+ acres) on record` : undefined} />
+          <Kpi label="Fire history score" value={pct(area.fire_history)}
+            note="average of the three parts below; older fires count less (half-life 10 yrs)" />
+        </div>
+        <div className="fire-parts">
+          {([["Frequency", area.fire_freq, "separate fires nearby, age-weighted"],
+             ["Repeat burning", area.fire_reburn, "share of land burned, repeat burns count again"],
+             ["Recent big fire", area.fire_last, "how recently a fire burned ≥1% of the area"],
+             ["Satellite detections", area.fire_detections, "wildland hot spots, age-weighted"]] as [string, number, string][])
+            .map(([label, v, note]) => (
+              <div key={label} className="fire-part">
+                <div className="fire-part-head"><span>{label}</span><b>{pct(v)}</b></div>
+                <div className="meter"><i style={{ width: `${Math.round((v ?? 0) * 100)}%` }} /></div>
+                <div className="kpi-note">{note}</div>
+              </div>
+            ))}
         </div>
       </section>
 

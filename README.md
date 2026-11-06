@@ -20,7 +20,7 @@ The fire layers cover all of California.
 You need **Node.js 20+** (and `curl` + `unzip`, which macOS and most Linux systems already have).
 
 ```bash
-./fetch_data.sh   # downloads the pre-built map data (~85 MB) from the GitHub release "data-v3"
+./fetch_data.sh   # downloads the pre-built map data (~85 MB) from the GitHub release "data-v4"
 ./dev.sh          # installs packages on first run, then serves http://localhost:5173
 ```
 
@@ -33,7 +33,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
 After a rebuild, publish new data for everyone by zipping the folder's contents as `map-data.zip`
-and attaching it to a new release (e.g. `data-v4`). Others can then run `./fetch_data.sh data-v4`.
+and attaching it to a new release (e.g. `data-v5`). Others can then run `./fetch_data.sh data-v5`.
 
 `dev.sh` also uses a project-local Node in `.tools/node` if one exists (git-ignored).
 
@@ -59,7 +59,7 @@ the house's year. The last one or two years may be incomplete in assessor record
 | Year built | San Joaquin County parcels ([ArcGIS service](https://services2.arcgis.com/GQhSReJEO6f7tsvy/ArcGIS/rest/services/Parcels/FeatureServer)) | Only property fields are downloaded. **Owner and mailing-address fields are not.** |
 | 2020 snapshot | [Microsoft US Building Footprints v2](https://github.com/microsoft/USBuildingFootprints) | ODbL |
 | Aerial imagery | USDA NAIP via [Microsoft Planetary Computer](https://planetarycomputer.microsoft.com/dataset/naip) | Loaded live in the browser, not stored |
-| Fire perimeters | [NIFC InterAgency Fire Perimeter History](https://data-nifc.opendata.arcgis.com/) | Includes CAL FIRE FRAP data. CAL FIRE's own FRAP service needs a token |
+| Fire perimeters | [CAL FIRE FRAP California Fire Perimeters (all)](https://data.ca.gov/dataset/california-fire-perimeters-all) through 2025, plus [NIFC WFIGS](https://data-nifc.opendata.arcgis.com/) perimeters for the current season | FRAP is the state's authoritative record (fires 10+ acres). NIFC's interagency *history* was dropped: it is complete only to ~2019 and missed the 2020 SCU Lightning Complex |
 | Fire detections | [NASA FIRMS](https://firms.modaps.eosdis.nasa.gov/download/) MODIS yearly country files, 2001–2025 | Vegetation fires only (type 0), confidence ≥ 30 |
 | Hazard zones | CAL FIRE FHSZ, SRA (2024) + LRA (2025), via a public Sonoma County mirror | Confirm with [CAL FIRE OSFM](https://osfm.fire.ca.gov/) before relying on them |
 | Elevation / slope | [USGS 3DEP](https://www.usgs.gov/3d-elevation-program) 1 arc-second DEM (model); [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) (map shading) | Public domain (USGS). Slope classes: ≤ 15% buildable, 15–25% hillside, > 25% too steep |
@@ -74,15 +74,31 @@ the house's year. The last one or two years may be incomplete in assessor record
 - **10-yr growth:** residential buildings built 2016–2025 ÷ residential buildings built up to 2015.
   `growth_score` is its percentile among places with ≥ 300 dated homes.
 - **Wildfire risk (0–100, fixed scale):** 50 pts × share of the place in High/Very High FHSZ
-  + 30 pts × share of the surrounding 10 km burned since 2000 (full points at 25%)
-  + 20 pts × wildland FIRMS detections per 100 km² since 2001 (full points at 50).
-  Detections outside any hazard zone are ignored, because on the valley floor they are mostly farm
-  burning. A fixed scale (not a percentile) means a place with no nearby wildland fire scores 0,
-  and scores stay comparable when more counties are added.
+  + 30 pts × **fire history** + 20 pts × **satellite detections**, measured in a 10 km ring
+  (see [Fire history](#fire-history-frequency-and-recency) below). Detections outside any hazard zone
+  are ignored, because on the valley floor they are mostly farm burning. A fixed scale (not a percentile)
+  means a place with no nearby wildland fire scores 0, and scores stay comparable across counties.
 - **Opportunity:** `growth_score − 0.5 × risk_score`.
 
 These weights are a starting point for discussion, not a validated model. Insurance and crime are
 shown as context in the report and statewide county map but are **not** part of the score yet.
+
+## Fire history (frequency and recency)
+
+`pipeline/fire_history.py` is shared by the city scores (10 km ring) and the recommendation model
+(5 km ring around each cell). It uses **every fire on record** (10+ acres), and each fire's weight
+halves every 10 years (`HALF_LIFE`): a fire last year ≈ 1, 10 years ago 0.5, 20 years ago 0.25.
+
+| Part | Measures | Full marks at |
+|---|---|---|
+| Frequency | Age-weighted number of separate fires per 100 km² | 4 |
+| Repeat burning | Age-weighted share of the ring burned. Land that burns twice counts twice | 25% |
+| Recent big fire | Max over fires of age weight × size factor (share of ring burned ÷ 1%), so a large fire last year ≈ 1 and a small grass fire counts little | burned ≥ 1% of the ring last year |
+| Satellite detections | Age-weighted wildland FIRMS detections per 100 km² | 25 |
+
+`fire history` = mean of the first three parts; `fire risk = 0.5 × hazard zone + 0.3 × fire history +
+0.2 × detections`. The recommendation backtest computes fire history *as of* each test year, so it never
+sees fires that hadn't happened yet.
 
 ## Growth-direction arrows
 
@@ -124,7 +140,7 @@ factor was (1 − 0.8 × risk), briefly (1 − 0.4 × risk), then made progressi
 | Open land | Building footprint < 6% of the cell = 1, 6–12% = 0.5, more = 0 |
 | Flat share (terrain) | Share of the cell with slope ≤ 15%, plus half the share at 15–25% (hillside: costly grading). Land steeper than 25% doesn't count. Slope is computed at 25 m from USGS 3DEP 1 arc-second bare-earth elevation (`pipeline/terrain.py`) |
 | Next to town | 1 within 1 km of a built-up cell (≥ 10% footprint), falling to 0 at 4 km |
-| Fire risk | 0.5 × FHSZ at the cell (Moderate 0.4 / High 0.7 / Very High 1) + 0.3 × share of land within 5 km burned since 2000 (full at 25%) + 0.2 × wildland FIRMS detections within 5 km per 100 km² (full at 50) |
+| Fire risk | 0.5 × FHSZ at the cell (Moderate 0.4 / High 0.7 / Very High 1) + 0.3 × fire history within 5 km + 0.2 × age-weighted wildland detections within 5 km (see [Fire history](#fire-history-frequency-and-recency)) |
 | Excluded | Delta Primary Zone ([DWR boundary](https://gis.water.ca.gov/arcgis/rest/services/Boundaries/i03_Delta_PrimarySecondary_Zones/FeatureServer/0); urban development restricted by the Delta Protection Act) cells > 40% water (Overture water), and cells too steep to build (< 20% of the land under 15% slope) |
 
 Cells scoring ≥ 30 that touch each other are merged into zones, ranked by total score (top 10 shown).
@@ -135,11 +151,11 @@ county it picked contained this share of the homes actually built in the followi
 | As of | Predicts | Model | Edge-of-town rule (no direction) | Random |
 |---|---|---|---|---|
 | 2010 | 2011–15 | 56% | 35% | 5% |
-| 2013 | 2014–18 | 50% | 29% | 5% |
-| 2016 | 2017–21 | 54% | 31% | 5% |
-| 2019 | 2020–24 | 42% | 25% | 5% |
+| 2013 | 2014–18 | 48% | 29% | 5% |
+| 2016 | 2017–21 | 52% | 31% | 5% |
+| 2019 | 2020–24 | 40% | 25% | 5% |
 
-The 2019 figure is lower than with a milder fire penalty (48%) because much of the 2020–24 building went
+The 2019 figure is lower than with a milder fire penalty (48%), because much of the 2020–24 building went
 into fire-prone Tracy Hills, which the model now deliberately avoids. It ranks where it's *safer* to build,
 not only where building will happen.
 

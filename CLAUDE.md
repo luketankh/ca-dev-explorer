@@ -25,7 +25,7 @@ context, and a ranked "where to build next" recommendation with a backtest.
   `src/config.ts` (years, data URLs, colour ramps), `src/types.ts` (data shapes).
 - `data/` (git-ignored): raw downloads and intermediate files.
 - `web/public/data/` (git-ignored): what the app loads. Get it with `./fetch_data.sh`
-  (GitHub release `data-v3`) or rebuild with `./run_pipeline.sh`.
+  (GitHub release `data-v4`) or rebuild with `./run_pipeline.sh`.
 
 ## Commands
 
@@ -52,6 +52,9 @@ There is no test suite yet. Verify changes by type-checking, building, and openi
 - **Residential vs non-residential** uses the parcel's assessor `category`. Growth scores, arrows and
   the recommendation are residential-only. Commercial & industrial growth is measured in footprint
   sq ft, and only ~47% of C&I buildings have a year, so it is undercounted.
+- **Fire history accounts for frequency and recency** (`fire_history.py`): all fires on record (10+ acres), each
+  weighted 0.5^(age/10). Parts: frequency, repeat burning, recent *big* fire (size-aware), plus age-weighted
+  FIRMS detections. Backtests compute it as of the test year (no future fires).
 - **Wildfire risk is on a fixed 0–100 scale**, not percentiles. Percentiles made quiet valley towns
   look risky (the "Linden" bug). FIRMS detections only count inside FHSZ hazard zones, because
   outside them they are mostly agricultural burning.
@@ -62,7 +65,7 @@ There is no test suite yet. Verify changes by type-checking, building, and openi
   land are excluded. In San Joaquin this mostly removes the SW (Corral Hollow / Altamont) and eastern foothills.
 - **Recommendation** (`13_recommend.py`): 500 m cells, score = 100 × momentum × open land × flat share × next to
   town × (1 − fire risk)^`FIRE_EXPONENT` (= 2, progressive; history: 1 − 0.8·risk, then 1 − 0.4·risk). The Delta Primary Zone and water are excluded. Backtest: the top 5%
-  of cells captured 42–56% of the next 5 years' homes (vs 25–35% for an edge-of-town rule). If you change
+  of cells captured 40–56% of the next 5 years' homes (vs 25–35% for an edge-of-town rule). If you change
   the model, re-run the backtest and update the README table.
 - **Insurance** (HearthMap/NBER, CC BY 4.0, attribution required) is county-level only. **Crime**
   (CA DOJ) is per police agency; Sheriff-patrolled places (incl. Mountain House) share the Sheriff's rate.
@@ -80,7 +83,8 @@ There is no test suite yet. Verify changes by type-checking, building, and openi
 - **Tiles** are built by the pure-Python `pipeline/tiler.py` (tippecanoe wasn't available). It
   handles county-sized data; for statewide data, switch to tippecanoe.
 - **ArcGIS sources** page at 1,000–2,000 records; use `arcgis_query()` in `common.py`. CAL FIRE's own
-  FRAP service needs a token, so fire perimeters come from NIFC instead.
+  `egis` FRAP service needs a token; use the public ArcGIS Online copy (`services1.arcgis.com/jUJYIo9tSA7EHvfZ/
+  .../California_Historic_Fire_Perimeters`). NIFC's InterAgency *history* is incomplete after ~2019, so don't use it.
 - **Census API now requires a key**, so populations come from CA DOF E-1 (`11_insurance_crime.py`).
   DOF county rows are detected by matching the county total, because San Francisco has no
   "Unincorporated" row.
@@ -92,8 +96,10 @@ There is no test suite yet. Verify changes by type-checking, building, and openi
 ## Working conventions
 
 - Keep the UI copy plain and specific, and state data caveats in the app where users see the number.
-- Colours: blue ramp = building age / growth, orange = fire history, magenta = hazard zones,
-  purple = county comparison, aqua/green = recommendation, orange `#eb6834` = "built this year".
+- Colours: buildings are hue = type, lightness = age (blue = residential, amber = commercial & industrial,
+  grey = other; red `#e34948` = built in the slider year; validated colour-blind safe). Blue also = city growth,
+  orange = fire history, magenta = hazard zones, purple = county comparison, aqua/green = recommendation,
+  brown = steep ground. The old "Buildings shown" filter was replaced by this colour coding.
 - New data sources: add a numbered pipeline step, cache raw downloads in `data/raw/`, list the
   source and licence in the README table, and add the step to `run_pipeline.sh`.
 - After rebuilding data, publish it as a new GitHub release (`map-data.zip` with the contents of

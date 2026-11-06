@@ -81,7 +81,20 @@ def write_geojson(gdf: gpd.GeoDataFrame, path: Path) -> None:
     print(f"  wrote {path.relative_to(ROOT)} ({len(gdf):,} features)")
 
 
+def _json_safe(o):
+    """Replace NaN/inf (invalid JSON, which browsers reject) with None, recursively."""
+    if isinstance(o, float):
+        return None if (o != o or o in (float("inf"), float("-inf"))) else o
+    if isinstance(o, dict):
+        return {k: _json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_json_safe(v) for v in o]
+    if hasattr(o, "item") and not isinstance(o, (str, bytes)):  # numpy scalars
+        return _json_safe(o.item())
+    return o
+
+
 def write_json(obj, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, indent=1))
+    path.write_text(json.dumps(_json_safe(obj), indent=1, allow_nan=False))
     print(f"  wrote {path.relative_to(ROOT)}")

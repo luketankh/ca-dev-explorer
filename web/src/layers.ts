@@ -46,13 +46,18 @@ function firstSymbolLayer(map: MlMap): string | undefined {
 
 const rampStops = (stops: [number, string][]) => stops.flatMap(([v, c]) => [v, c]);
 
+/** Hue = building type (assessor use), lightness = year built (darker = newer); red = built in `year`. */
 export function buildingColor(year: number): ExpressionSpecification {
+  const cat = ["coalesce", ["get", "category"], ""];
+  // y = 0 (undated, existed before 2020) clamps to the lightest (oldest) step of its type
+  const ramp = (stops: [number, string][]) => ["interpolate", ["linear"], ["get", "y"], ...rampStops(stops)];
   return [
     "case",
-    ["==", ["get", "ys"], "unknown"], COLORS.buildingUnknown,
     ["==", ["get", "y"], year], COLORS.builtThisYear,
-    ["interpolate", ["linear"], ["get", "y"], ...rampStops(COLORS.buildingRamp)],
-  ] as ExpressionSpecification;
+    ["==", cat, "Residential"], ramp(COLORS.buildingRamp),
+    ["in", cat, ["literal", ["Commercial", "Industrial"]]], ramp(COLORS.buildingRampCI),
+    ramp(COLORS.buildingRampOther),
+  ] as unknown as ExpressionSpecification;
 }
 
 export type BuildingUse = "all" | "residential" | "ci" | "other";

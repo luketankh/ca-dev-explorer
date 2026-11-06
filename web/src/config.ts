@@ -27,7 +27,7 @@ export const NAIP_YEARS = [2012, 2014, 2016, 2018, 2020, 2022];
 
 // Colour roles (sequential ramps, light basemap)
 export const COLORS = {
-  // building age: one blue ramp, older = lighter, newer = darker
+  // residential: one blue ramp, older = lighter, newer = darker (undated pre-2020 buildings use the lightest step)
   buildingRamp: [
     [1950, "#9ec5f4"],
     [1980, "#6da7ec"],
@@ -35,8 +35,23 @@ export const COLORS = {
     [2015, "#1c5cab"],
     [2025, "#0d366b"],
   ] as [number, string][],
-  buildingUnknown: "#b4b2a9",
-  builtThisYear: "#eb6834",
+  // commercial & industrial: one amber ramp, older = lighter (validated vs blue + red, incl. colour-blind)
+  buildingRampCI: [
+    [1950, "#fbe2a0"],
+    [1980, "#f5c451"],
+    [2000, "#eda100"],
+    [2015, "#c98500"],
+    [2025, "#8f5d00"],
+  ] as [number, string][],
+  // other (agricultural, public, institutional, no parcel match): neutral grey ramp, deliberately recessive
+  buildingRampOther: [
+    [1950, "#dcdad3"],
+    [1980, "#c3c1b9"],
+    [2000, "#a3a198"],
+    [2015, "#85837b"],
+    [2025, "#6b6a64"],
+  ] as [number, string][],
+  builtThisYear: "#e34948",
   // fire history: one orange ramp, older = lighter
   fireOld: "#f6c4a6",
   fireRecent: "#b8441a",

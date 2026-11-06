@@ -8,6 +8,8 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 
+from fire_history import METHOD as FIRE_METHOD, area_history, load_fires, load_wild_detections
+from fire_history import risk as fire_risk
 from common import PROCESSED, WEB_DATA, write_geojson, write_json
 
 SERIES_START, SERIES_END = 1980, 2026  # assessor already records some 2026 completions
@@ -46,6 +48,10 @@ wild = gpd.sjoin(firms[["geometry"]], fhsz_any[["geometry"]], predicate="within"
 firms_wild = firms.loc[wild.index.unique()]
 print(f"  FIRMS detections: {len(firms):,} total, {len(firms_wild):,} in wildland hazard zones")
 fires_sidx, firms_sidx, wild_sidx = fires.sindex, firms.sindex, firms_wild.sindex
+# frequency + recency weighted fire history (all years on record), see fire_history.py
+AS_OF = 2025
+all_fires = load_fires(county.geometry.iloc[0], BUFFER_M + 5000)
+wild_dets = load_wild_detections(county.geometry.iloc[0], BUFFER_M + 5000)
 years = list(range(SERIES_START, SERIES_END + 1))
 
 
@@ -80,6 +86,7 @@ def area_stats(geom, mask):
     hv = fhsz_hv.iloc[fhsz_hv.sindex.query(geom, predicate="intersects")]
     hv_share = float(hv.intersection(geom).area.sum() / geom.area) if len(hv) else 0.0
     anyz = fhsz_any.iloc[fhsz_any.sindex.query(geom, predicate="intersects")]
+    hist = area_history(ring, all_fires, wild_dets, AS_OF)
     bpts = bp.loc[mask, "pt"]
     bldg_in_zone = (float(bpts.within(anyz.geometry.union_all()).mean())
                     if len(anyz) and len(bpts) else 0.0)
@@ -100,6 +107,7 @@ def area_stats(geom, mask):
         "wildland_detections_per_100km2": round(det_wild / ring_100km2, 1),
         "fhsz_high_vhigh_share": round(hv_share, 3),
         "buildings_in_fhsz_share": round(bldg_in_zone, 3),
+        **{k: (round(v, 3) if isinstance(v, float) else v) for k, v in hist.items()},
         "ci_buildings": ci_all,
         "ci_dated_share": round(int((mask & ci).sum()) / ci_all, 2) if ci_all else None,
         "ci_sqft_2016_2025": int(sum(yearly_ci[years.index(2016): years.index(2025) + 1])),
@@ -127,9 +135,9 @@ df.loc[eligible, "growth_score"] = (df.loc[eligible, "growth_10yr_pct"].rank(pct
 
 
 def risk(d):
-    return (100 * (0.5 * d["fhsz_high_vhigh_share"].clip(0, 1)
-                   + 0.3 * (d["burned_fraction_10km"] / BURNED_FRACTION_MAX).clip(0, 1)
-                   + 0.2 * (d["wildland_detections_per_100km2"] / WILD_DETECTIONS_MAX).clip(0, 1))).round(0)
+    # hazard = share of the place in High/Very High FHSZ; history + detections are age-weighted
+    return (100 * fire_risk(d["fhsz_high_vhigh_share"].clip(0, 1).values, d["fire_history"].values,
+                            d["fire_detections"].values)).round(0)
 
 
 df["risk_score"] = risk(df)
@@ -152,11 +160,9 @@ write_json({
         "fire_buffer_km": BUFFER_M / 1000, "fire_since": FIRE_SINCE,
         "growth": "Residential buildings with an assessor year built in 2016-2025, divided by "
                   "residential buildings built up to 2015.",
-        "risk": "Fixed 0-100 scale: 50 pts x share of the place in High/Very High Fire Hazard "
-                "Severity Zones + 30 pts x share of the surrounding 10 km burned since 2000 (full "
-                f"points at {int(BURNED_FRACTION_MAX * 100)}%) + 20 pts x wildland satellite fire "
-                f"detections per 100 km2 since 2001 (full points at {WILD_DETECTIONS_MAX}; detections "
-                "outside hazard zones, mostly farm burning, are ignored).",
+        "risk": "Fixed 0-100 scale. " + FIRE_METHOD + " Hazard zone here = share of the place in High/Very High "
+                "zones; history and detections use a 10 km ring around the place. Satellite detections "
+                "outside hazard zones (mostly farm burning) are ignored.",
         "opportunity": "growth score - 0.5 x wildfire risk score",
     },
 }, WEB_DATA / "stats.json")

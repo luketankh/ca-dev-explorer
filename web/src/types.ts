@@ -19,6 +19,16 @@ export interface PlaceMetrics {
   firms_wildland_10km_since_2001: number;
   burned_fraction_10km: number;
   wildland_detections_per_100km2: number;
+  fire_history: number;
+  fire_freq: number;
+  fire_reburn: number;
+  fire_last: number;
+  fire_detections: number;
+  years_since_fire: number | null;
+  fires_on_record: number;
+  fires_weighted: number;
+  last_fire_name: string | null;
+  last_fire_year: number | null;
   fhsz_high_vhigh_share: number;
   buildings_in_fhsz_share: number;
   growth_score: number | null;
@@ -93,6 +103,8 @@ export interface Recommend {
   excluded: { delta_primary_zone_cells: number; water_cells: number; too_steep_cells: number };
   terrain: { slope_ok_pct: number; slope_max_pct: number; dem: string };
   fire_exponent: number;
+  fire_half_life: number;
+  fire_method: string;
 }
 
 export interface Stats {

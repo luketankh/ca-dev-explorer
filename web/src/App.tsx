@@ -10,8 +10,8 @@ import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&ur
 
 import { BASEMAP_STYLE, COLORS, DATA, DEFAULT_PLACE, INITIAL_VIEW, NAIP_YEARS, YEAR_MAX, YEAR_MIN } from "./config";
 import {
-  addDataLayers, applyYear, BUILDING_USES, COUNTY_METRICS, setCountyMetric, setNaip, setVisibility,
-  type BuildingUse, type CountyMetric, type ExtraData, type FireWindow, type LayerKey, type Visibility,
+  addDataLayers, applyYear, COUNTY_METRICS, setCountyMetric, setNaip, setVisibility,
+  type CountyMetric, type ExtraData, type FireWindow, type LayerKey, type Visibility,
 } from "./layers";
 import Report from "./components/Report";
 import type { Context, PlaceMetrics, Recommend, Stats } from "./types";
@@ -25,12 +25,12 @@ const esc = (s: unknown) =>
 
 const LAYER_LABELS: [LayerKey, string, string][] = [
   ["naip", "Aerial imagery (NAIP)", "USDA NAIP via Planetary Computer, zoom in to view"],
-  ["buildings", "Buildings by year built", "Overture Maps + County Assessor + Microsoft 2020"],
+  ["buildings", "Buildings by type & year built", "Overture Maps + County Assessor + Microsoft 2020"],
   ["arrows", "Growth direction arrows", "Where homes built in the last 5 years went, vs existing homes"],
   ["recommend", "Where to build next (2026+)", "Growth momentum × flat open land × next to town × fire risk"],
   ["terrain", "Terrain (shaded relief)", "Elevation tiles: USGS 3DEP via AWS Terrain Tiles"],
   ["steep", "Steep ground", "Slope from USGS 3DEP 30 m: hillside 15–25%, too steep >25%"],
-  ["fires", "Fire perimeters", "NIFC interagency fire history"],
+  ["fires", "Fire perimeters", "CAL FIRE FRAP (all years) + NIFC WFIGS (current season)"],
   ["firms", "Fire detection heatmap", "NASA FIRMS MODIS, 2001–2025"],
   ["fhsz", "Fire Hazard Severity Zones", "CAL FIRE, SRA 2024 / LRA 2025"],
   ["places", "Cities & growth choropleth", "Census TIGER places"],
@@ -61,7 +61,10 @@ function recPopup(cell: MapGeoJSONFeature | undefined, zone: { properties: unkno
     <tr><th>Next to town</th><td>${pct(c.adjacency)}</td></tr>
     <tr><th>Terrain</th><td>${pct(c.flat_share)} flat (≤15% slope) · avg slope ${esc(c.slope_mean)}% · ${esc(c.elev_m)} m</td></tr>
     <tr><th>Open land</th><td>${Number(c.room) === 1 ? "Yes" : Number(c.room) > 0 ? "Partly built" : "Built up"}</td></tr>
-    <tr><th>Fire risk</th><td>${pct(c.fire_risk)}${c.fhsz_class && c.fhsz_class !== "None" ? ` · FHSZ ${esc(c.fhsz_class)}` : ""}</td></tr>` : "";
+    <tr><th>Fire risk</th><td><b>${pct(c.fire_risk)}</b>${c.fhsz_class && c.fhsz_class !== "None" ? ` · FHSZ ${esc(c.fhsz_class)}` : ""}</td></tr>
+    <tr><th>Fire history</th><td>${pct(c.fire_history)} (frequency ${pct(c.fire_freq)}, repeat burns ${pct(c.fire_reburn)},
+      recent big fire ${pct(c.fire_last)})${c.years_since_fire !== null && c.years_since_fire !== undefined && c.years_since_fire !== ""
+        ? ` · last fire ${Number(c.years_since_fire) === 0 ? "this year" : `${esc(c.years_since_fire)} yrs ago`}` : " · none on record"}</td></tr>` : "";
   return `<div class="pop"><h4>${head}</h4><table>${zoneRows}${cellRows}</table>
     <div class="pop-id">500 m cell. Score = 100 × momentum × open land × flat share × next to town × (1 − fire risk)<sup>${fireExponent}</sup>.</div></div>`;
 }
@@ -145,7 +148,6 @@ export default function App() {
     counties: true, recommend: true, terrain: true, steep: true,
   });
   const [recommend, setRecommend] = useState<Recommend | null>(null);
-  const [buildingUse, setBuildingUse] = useState<BuildingUse>("all");
   const [extra, setExtra] = useState<ExtraData | null>(null);
   const [context, setContext] = useState<Context | null>(null);
   const [countyMetric, setCountyMetricState] = useState<CountyMetric>("premium");
@@ -256,8 +258,8 @@ export default function App() {
   // year / fire window
   useEffect(() => {
     if (!ready || !map.current) return;
-    applyYear(map.current, year, fireWindow, buildingUse);
-  }, [ready, year, fireWindow, buildingUse]);
+    applyYear(map.current, year, fireWindow);
+  }, [ready, year, fireWindow]);
 
   // layer visibility
   useEffect(() => {
@@ -388,14 +390,20 @@ export default function App() {
         </section>
 
         <section>
-          <h3>Buildings shown</h3>
-          <div className="seg">
-            {BUILDING_USES.map(([k, l]) => (
-              <button key={k} className={buildingUse === k ? "on" : ""} onClick={() => setBuildingUse(k)}>{l}</button>
-            ))}
+          <h3>Building colors</h3>
+          {([["Residential", COLORS.buildingRamp], ["Commercial & industrial", COLORS.buildingRampCI],
+             ["Other", COLORS.buildingRampOther]] as [string, [number, string][]][]).map(([label, stops]) => (
+            <div key={label} className="type-key">
+              <span className="type-name">{label}</span>
+              <span className="type-ramp" style={{ background: `linear-gradient(90deg, ${stops.map(([, c]) => c).join(",")})` }} />
+            </div>
+          ))}
+          <div className="type-key">
+            <span className="type-name">Built in {year}</span>
+            <span className="type-ramp" style={{ background: COLORS.builtThisYear }} />
           </div>
-          <div className="caption">Use comes from the county assessor parcel. “Other” = agricultural, public,
-            institutional, and buildings with no parcel match.</div>
+          <div className="caption">Lighter = older, darker = newer (≤1950 → 2025). Type comes from the county
+            assessor parcel; “Other” = agricultural, public, institutional or no parcel match.</div>
         </section>
 
         <section>
@@ -439,13 +447,8 @@ export default function App() {
 
         <section className="legend">
           <h3>Legend</h3>
-          <div className="legend-title">Buildings: year built</div>
-          <div className="ramp" style={{
-            background: `linear-gradient(90deg, ${COLORS.buildingRamp.map(([, c]) => c).join(",")})`,
-          }} />
-          <div className="ramp-labels"><span>≤1950</span><span>1980</span><span>2000</span><span>2025</span></div>
-          <div className="sw"><i style={{ background: COLORS.builtThisYear }} />Built in {year}</div>
-          <div className="sw"><i style={{ background: COLORS.buildingUnknown }} />Pre-2020, year unknown</div>
+          <div className="legend-title">Buildings</div>
+          <div className="caption" style={{ marginTop: 0 }}>Colored by type and age; see “Building colors” above.</div>
           <div className="legend-title">Fire perimeters</div>
           <div className="ramp" style={{ background: `linear-gradient(90deg, ${COLORS.fireOld}, ${COLORS.fireRecent})` }} />
           <div className="ramp-labels"><span>Older</span><span>Recent</span></div>

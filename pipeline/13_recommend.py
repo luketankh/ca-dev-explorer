@@ -11,8 +11,9 @@ The county is cut into 500 m x 500 m cells. For a reference year Y each cell get
   adjacency   0-1  Is it next to existing urban land? 1 within 1 km of a built-up cell, falling to 0
                    at 4 km (leapfrog development is rare).
   fire risk   0-1  0.5 x Fire Hazard Severity Zone at the cell (Moderate .4 / High .7 / Very High 1)
-                   + 0.3 x share of the land within 5 km burned since 2000 (full at 25%)
-                   + 0.2 x wildland satellite fire detections within 5 km per 100 km2 (full at 50)
+                   + 0.3 x fire history within 5 km: frequency, repeat burning and time since the
+                         last fire, every fire weighted by age (half-life 10 years; fire_history.py)
+                   + 0.2 x wildland satellite fire detections within 5 km, age-weighted the same way
   excluded         Delta Primary Zone (Delta Protection Act), cells > 40% water, outside county.
 
   suitability = 100 x momentum x room x flat share x adjacency x (1 - fire risk) ** FIRE_EXPONENT
@@ -36,6 +37,7 @@ from sklearn.cluster import DBSCAN
 from sklearn.neighbors import NearestNeighbors
 
 from common import AOI_BBOX, OVERTURE_RELEASE, PROCESSED, RAW, WEB_DATA, arcgis_query, write_geojson, write_json
+from fire_history import HALF_LIFE, METHOD as FIRE_METHOD, GridHistory, risk as fire_risk
 from terrain import RES as DEM_RES, SLOPE_MAX, SLOPE_OK, cell_terrain, load_dem_slope
 
 ALBERS, CELL = 3310, 500
@@ -96,17 +98,17 @@ cls = cls[~cls.index.duplicated()]["hazard"].map({"Moderate": 0.4, "High": 0.7, 
 cells["fhsz"] = cls.fillna(0).values
 cells["fhsz_class"] = gpd.sjoin(gpd.GeoDataFrame(geometry=cells.centroid, crs=ALBERS), fhsz[["hazard", "geometry"]],
                                 predicate="within", how="left").groupby(level=0)["hazard"].first().fillna("None").values
-fires = gpd.read_file(PROCESSED / "fire_perimeters.geojson").to_crs(ALBERS)
-fires = fires[fires["year"] >= 2000]
-burned = fires.geometry.union_all()
-rings = cells.centroid.buffer(5000)
-cells["burn_frac_5km"] = rings.intersection(burned).area / rings.area
-firms = gpd.read_file(PROCESSED / "firms_modis.geojson").to_crs(ALBERS)
-wild = firms.loc[gpd.sjoin(firms[["geometry"]], fhsz[["geometry"]], predicate="within").index.unique()]
-det = gpd.sjoin(gpd.GeoDataFrame(geometry=rings, crs=ALBERS), wild[["geometry"]], predicate="contains")
-cells["wild_det_5km"] = det.groupby(level=0).size().reindex(cells.index).fillna(0).values
-cells["fire_risk"] = (0.5 * cells["fhsz"] + 0.3 * (cells["burn_frac_5km"] / 0.25).clip(0, 1)
-                      + 0.2 * ((cells["wild_det_5km"] / (rings.area / 1e8)) / 50).clip(0, 1)).clip(0, 1)
+# fire history (frequency + recency) is computed per reference year, so backtests only see the
+# fires that had happened by then (see fire_history.py)
+print("Fire history ...")
+fh = GridHistory(cells[["cx", "cy"]].values, cgeom, radius=5000, cell=CELL)
+
+
+def fire_at(year):
+    h = fh.at(year)
+    h["fire_risk"] = fire_risk(cells["fhsz"].values, h["fire_history"].values, h["fire_detections"].values)
+    return h
+
 # --- terrain (USGS 3DEP, 25 m slope) ------------------------------------------------------------
 print("Terrain ...")
 elev, slope, dem_tr = load_dem_slope()
@@ -186,10 +188,12 @@ def score(year):
             mom += w * np.exp(-((along - AHEAD_M) ** 2 + lat ** 2) / (2 * SIGMA_M ** 2))
     mom = np.clip(mom / np.percentile(mom[mom > 0], 99), 0, 1) if (mom > 0).any() else mom
     # open land only counts where the ground is flat enough to build on
-    s = 100 * mom * room * cells["terrain"].values * adjacency * (1 - cells["fire_risk"].values) ** FIRE_EXPONENT
+    fire = fire_at(year)
+    s = 100 * mom * room * cells["terrain"].values * adjacency * (1 - fire["fire_risk"].values) ** FIRE_EXPONENT
     s[excluded.values] = 0
-    return pd.DataFrame({"score": s, "momentum": mom, "room": room, "adjacency": adjacency,
-                         "built_frac": built_frac.values})
+    out = pd.DataFrame({"score": s, "momentum": mom, "room": room, "adjacency": adjacency,
+                        "built_frac": built_frac.values})
+    return pd.concat([out, fire.reset_index(drop=True)], axis=1)
 
 
 # --- backtest -----------------------------------------------------------------------------------
@@ -261,7 +265,9 @@ for z in zones.geometry:
         "flat_share": round(float(zc["flat_share"].mean()), 2),
         "elev_m": round(float(zc["elev_m"].mean())),
         "fhsz": ", ".join(sorted(set(zc["fhsz_class"]) - {"None"})) or "None",
-        "burn_frac_5km": round(float(zc["burn_frac_5km"].mean()), 3),
+        "fire_history": round(float(zc["fire_history"].mean()), 2),
+        "years_since_fire": (None if zc["years_since_fire"].isna().all() else int(zc["years_since_fire"].min())),
+        "fires_weighted": round(float(zc["fires_weighted"].mean()), 2),
         "geometry": z,
     })
 zones = gpd.GeoDataFrame(zone_rows, crs=ALBERS).sort_values("score_sum", ascending=False).reset_index(drop=True)
@@ -271,13 +277,15 @@ zw = zones.to_crs(4326)
 write_geojson(zw, WEB_DATA / "recommend_zones.geojson")
 
 out_cells = cells[cells["score"] >= 5].copy()
-out_cells["fire_risk"] = out_cells["fire_risk"].round(2)
+for c in ("fire_risk", "fire_history", "fire_freq", "fire_reburn", "fire_last", "fire_detections"):
+    out_cells[c] = out_cells[c].round(2)
 out_cells["momentum"] = out_cells["momentum"].round(2)
 out_cells["adjacency"] = out_cells["adjacency"].round(2)
 for c, d in (("slope_mean", 1), ("flat_share", 2), ("terrain", 2), ("elev_m", 0)):
     out_cells[c] = out_cells[c].round(d)
 write_geojson(out_cells[["score", "momentum", "room", "terrain", "flat_share", "slope_mean", "elev_m", "adjacency",
-                         "fire_risk", "fhsz_class", "geometry"]].to_crs(4326),
+                         "fire_risk", "fire_history", "fire_freq", "fire_reburn", "fire_last", "fire_detections",
+                         "years_since_fire", "fhsz_class", "geometry"]].to_crs(4326),
               WEB_DATA / "recommend_cells.geojson")
 
 pts = zw.copy()
@@ -291,6 +299,8 @@ write_json({
                  "water_cells": int((cells["water_frac"] > 0.4).sum()),
                  "too_steep_cells": int(cells["too_steep"].sum())},
     "fire_exponent": FIRE_EXPONENT,
+    "fire_half_life": HALF_LIFE,
+    "fire_method": FIRE_METHOD,
     "terrain": {"slope_ok_pct": SLOPE_OK, "slope_max_pct": SLOPE_MAX, "dem": "USGS 3DEP 1 arc-second"},
 }, WEB_DATA / "recommend.json")
 print(zones[["rank", "label", "score_sum", "cells", "acres", "momentum", "fire_risk", "slope_mean", "flat_share"]]
