@@ -46,8 +46,8 @@ function pointInRing([x, y]: number[], ring: number[][]): boolean {
   return inside;
 }
 
-// fire penalty used by the model (read from recommend.json on load)
-let firePenalty = 0.4;
+// fire exponent used by the model (read from recommend.json on load)
+let fireExponent = 2;
 
 function recPopup(cell: MapGeoJSONFeature | undefined, zone: { properties: unknown } | undefined) {
   const c = (cell?.properties ?? {}) as Record<string, number | string>;
@@ -63,7 +63,7 @@ function recPopup(cell: MapGeoJSONFeature | undefined, zone: { properties: unkno
     <tr><th>Open land</th><td>${Number(c.room) === 1 ? "Yes" : Number(c.room) > 0 ? "Partly built" : "Built up"}</td></tr>
     <tr><th>Fire risk</th><td>${pct(c.fire_risk)}${c.fhsz_class && c.fhsz_class !== "None" ? ` · FHSZ ${esc(c.fhsz_class)}` : ""}</td></tr>` : "";
   return `<div class="pop"><h4>${head}</h4><table>${zoneRows}${cellRows}</table>
-    <div class="pop-id">500 m cell. Score = 100 × momentum × open land × flat share × next to town × (1 − ${firePenalty} × fire risk).</div></div>`;
+    <div class="pop-id">500 m cell. Score = 100 × momentum × open land × flat share × next to town × (1 − fire risk)<sup>${fireExponent}</sup>.</div></div>`;
 }
 
 function arrowPopup(f: MapGeoJSONFeature) {
@@ -175,7 +175,7 @@ export default function App() {
         };
         setExtra({ counties: c, arrows: a, recCells: rc, recZones: rz, recLabels, steep });
         setRecommend(rec);
-        firePenalty = (rec as Recommend).fire_penalty ?? firePenalty;
+        fireExponent = (rec as Recommend).fire_exponent ?? fireExponent;
         setContext(ctx);
         setPlacesFc(p);
       },

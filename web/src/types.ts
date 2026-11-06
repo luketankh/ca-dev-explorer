@@ -92,7 +92,7 @@ export interface Recommend {
     captured_pct: number; baseline_pct: number }[];
   excluded: { delta_primary_zone_cells: number; water_cells: number; too_steep_cells: number };
   terrain: { slope_ok_pct: number; slope_max_pct: number; dem: string };
-  fire_penalty: number;
+  fire_exponent: number;
 }
 
 export interface Stats {

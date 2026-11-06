@@ -15,8 +15,9 @@ The county is cut into 500 m x 500 m cells. For a reference year Y each cell get
                    + 0.2 x wildland satellite fire detections within 5 km per 100 km2 (full at 50)
   excluded         Delta Primary Zone (Delta Protection Act), cells > 40% water, outside county.
 
-  suitability = 100 x momentum x room x flat share x adjacency x (1 - FIRE_PENALTY x fire risk)
-  (FIRE_PENALTY = 0.4: a cell at maximum fire risk keeps 60% of its score)
+  suitability = 100 x momentum x room x flat share x adjacency x (1 - fire risk) ** FIRE_EXPONENT
+  (FIRE_EXPONENT = 2: progressive penalty; a cell keeps 81% of its score at 10% fire risk, 56% at 25%,
+   25% at 50% and 0% at maximum risk. Higher exponent = harsher.)
 
 Adjacent high-scoring cells are merged into ranked "zones". A backtest re-runs the model as of
 earlier years and measures how many homes built in the following 5 years landed in the cells it
@@ -41,7 +42,7 @@ ALBERS, CELL = 3310, 500
 YEAR = 2025
 BACKTEST_YEARS = [2010, 2013, 2016, 2019]
 WINDOW = 5
-FIRE_PENALTY = 0.4  # max share of a cell's score removed by fire risk
+FIRE_EXPONENT = 2  # fire factor = (1 - fire risk) ** FIRE_EXPONENT; higher = harsher
 AHEAD_M, SIGMA_M = 1500, 1200
 COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 DELTA_URL = "https://gis.water.ca.gov/arcgis/rest/services/Boundaries/i03_Delta_PrimarySecondary_Zones/FeatureServer/0"
@@ -185,7 +186,7 @@ def score(year):
             mom += w * np.exp(-((along - AHEAD_M) ** 2 + lat ** 2) / (2 * SIGMA_M ** 2))
     mom = np.clip(mom / np.percentile(mom[mom > 0], 99), 0, 1) if (mom > 0).any() else mom
     # open land only counts where the ground is flat enough to build on
-    s = 100 * mom * room * cells["terrain"].values * adjacency * (1 - FIRE_PENALTY * cells["fire_risk"].values)
+    s = 100 * mom * room * cells["terrain"].values * adjacency * (1 - cells["fire_risk"].values) ** FIRE_EXPONENT
     s[excluded.values] = 0
     return pd.DataFrame({"score": s, "momentum": mom, "room": room, "adjacency": adjacency,
                          "built_frac": built_frac.values})
@@ -289,7 +290,7 @@ write_json({
     "excluded": {"delta_primary_zone_cells": int(cells["in_primary_zone"].sum()),
                  "water_cells": int((cells["water_frac"] > 0.4).sum()),
                  "too_steep_cells": int(cells["too_steep"].sum())},
-    "fire_penalty": FIRE_PENALTY,
+    "fire_exponent": FIRE_EXPONENT,
     "terrain": {"slope_ok_pct": SLOPE_OK, "slope_max_pct": SLOPE_MAX, "dem": "USGS 3DEP 1 arc-second"},
 }, WEB_DATA / "recommend.json")
 print(zones[["rank", "label", "score_sum", "cells", "acres", "momentum", "fire_risk", "slope_mean", "flat_share"]]

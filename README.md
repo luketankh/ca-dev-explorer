@@ -20,7 +20,7 @@ The fire layers cover all of California.
 You need **Node.js 20+** (and `curl` + `unzip`, which macOS and most Linux systems already have).
 
 ```bash
-./fetch_data.sh   # downloads the pre-built map data (~85 MB) from the GitHub release "data-v2"
+./fetch_data.sh   # downloads the pre-built map data (~85 MB) from the GitHub release "data-v3"
 ./dev.sh          # installs packages on first run, then serves http://localhost:5173
 ```
 
@@ -33,7 +33,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
 After a rebuild, publish new data for everyone by zipping the folder's contents as `map-data.zip`
-and attaching it to a new release (e.g. `data-v3`). Others can then run `./fetch_data.sh data-v3`.
+and attaching it to a new release (e.g. `data-v4`). Others can then run `./fetch_data.sh data-v4`.
 
 `dev.sh` also uses a project-local Node in `.tools/node` if one exists (git-ignored).
 
@@ -112,10 +112,11 @@ non-residential growth is undercounted. Agricultural parcels mostly include a fa
 
 The county is cut into 500 m cells, and each gets
 
-`score = 100 × growth momentum × open land × flat share × next to town × (1 − 0.4 × fire risk)`
+`score = 100 × growth momentum × open land × flat share × next to town × (1 − fire risk)²`
 
-The fire penalty (`FIRE_PENALTY = 0.4` in `13_recommend.py`) means a cell at maximum fire risk keeps 60% of its
-score. It was 0.8 (keeps 20%) until it was relaxed at the project owner's request.
+The fire penalty is progressive (`FIRE_EXPONENT = 2` in `13_recommend.py`): a cell keeps 81% of its score at
+10% fire risk, 56% at 25%, 25% at 50% and 0% at maximum risk. Raise the exponent to be harsher. History: the
+factor was (1 − 0.8 × risk), briefly (1 − 0.4 × risk), then made progressive so fire counts for more.
 
 | Factor | How it's measured |
 |---|---|
@@ -136,7 +137,11 @@ county it picked contained this share of the homes actually built in the followi
 | 2010 | 2011–15 | 56% | 35% | 5% |
 | 2013 | 2014–18 | 50% | 29% | 5% |
 | 2016 | 2017–21 | 54% | 31% | 5% |
-| 2019 | 2020–24 | 48% | 25% | 5% |
+| 2019 | 2020–24 | 42% | 25% | 5% |
+
+The 2019 figure is lower than with a milder fire penalty (48%) because much of the 2020–24 building went
+into fire-prone Tracy Hills, which the model now deliberately avoids. It ranks where it's *safer* to build,
+not only where building will happen.
 
 Not included yet: zoning/general plans and spheres of influence, sewer/water capacity, FEMA flood
 zones, land prices and ownership, and approved but unbuilt subdivisions. Treat zones as places to

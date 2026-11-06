@@ -25,7 +25,7 @@ context, and a ranked "where to build next" recommendation with a backtest.
   `src/config.ts` (years, data URLs, colour ramps), `src/types.ts` (data shapes).
 - `data/` (git-ignored): raw downloads and intermediate files.
 - `web/public/data/` (git-ignored): what the app loads. Get it with `./fetch_data.sh`
-  (GitHub release `data-v2`) or rebuild with `./run_pipeline.sh`.
+  (GitHub release `data-v3`) or rebuild with `./run_pipeline.sh`.
 
 ## Commands
 
@@ -61,8 +61,8 @@ There is no test suite yet. Verify changes by type-checking, building, and openi
   aligned to the 500 m cells. ≤ 15% buildable, 15–25% counts half, > 25% not buildable; cells with < 20% flat
   land are excluded. In San Joaquin this mostly removes the SW (Corral Hollow / Altamont) and eastern foothills.
 - **Recommendation** (`13_recommend.py`): 500 m cells, score = 100 × momentum × open land × flat share × next to
-  town × (1 − 0.4 × fire risk) (`FIRE_PENALTY`; was 0.8, relaxed on request). The Delta Primary Zone and water are excluded. Backtest: the top 5%
-  of cells captured 48–56% of the next 5 years' homes (vs 25–35% for an edge-of-town rule). If you change
+  town × (1 − fire risk)^`FIRE_EXPONENT` (= 2, progressive; history: 1 − 0.8·risk, then 1 − 0.4·risk). The Delta Primary Zone and water are excluded. Backtest: the top 5%
+  of cells captured 42–56% of the next 5 years' homes (vs 25–35% for an edge-of-town rule). If you change
   the model, re-run the backtest and update the README table.
 - **Insurance** (HearthMap/NBER, CC BY 4.0, attribution required) is county-level only. **Crime**
   (CA DOJ) is per police agency; Sheriff-patrolled places (incl. Mountain House) share the Sheriff's rate.

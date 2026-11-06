@@ -75,7 +75,7 @@ export default function Report({ stats, places, selected, year, context, arrows,
           <h3>Where to build next</h3>
           <div className="caption" style={{ marginTop: 0 }}>
             Ranked zones of mostly open land just ahead of where homes went in {recommend.window}, next to
-            existing towns, on flat ground, penalised for wildfire risk. Click a zone to fly there.
+            existing towns, on flat ground, with higher wildfire risk penalised progressively harder. Click a zone to fly there.
           </div>
           <table className="rank rec">
             <thead>
@@ -98,8 +98,10 @@ export default function Report({ stats, places, selected, year, context, arrows,
           <details className="method">
             <summary>How this is calculated, and how well it worked in the past</summary>
             <p>The county is cut into {recommend.cell_m} m cells. Each cell scores
-              <b> 100 × growth momentum × open land × flat share × next to town × (1 − {recommend.fire_penalty} × fire risk)</b>.
-              At maximum fire risk a cell keeps {Math.round((1 - recommend.fire_penalty) * 100)}% of its score.</p>
+              <b> 100 × growth momentum × open land × flat share × next to town × (1 − fire risk)<sup>{recommend.fire_exponent}</sup></b>.
+              The fire penalty grows faster than the risk: a cell keeps{" "}
+              {[0.1, 0.25, 0.5].map((r) => `${Math.round((1 - r) ** recommend.fire_exponent * 100)}% of its score at ${r * 100}% risk`).join(", ")},
+              and nothing at maximum risk.</p>
             <ul>
               <li><b>Growth momentum:</b> how far the cell lies in the path of the growth arrows: 1.5 km ahead
                 of each cluster of new homes, along its direction, weighted by the cluster's size.</li>
