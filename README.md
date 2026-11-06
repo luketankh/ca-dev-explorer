@@ -139,6 +139,9 @@ investigate, not approvals.
 
 ## Project layout
 
+See also `CLAUDE.md` (working notes for contributors and Claude Code) and `docs/CHAT_HISTORY.md`
+(the full conversation in which the project was built).
+
 ```
 pipeline/            Python data pipeline (run in order, or ./run_pipeline.sh)
   01_boundaries.py     Census state / county / places
