@@ -15,7 +15,8 @@ The county is cut into 500 m x 500 m cells. For a reference year Y each cell get
                    + 0.2 x wildland satellite fire detections within 5 km per 100 km2 (full at 50)
   excluded         Delta Primary Zone (Delta Protection Act), cells > 40% water, outside county.
 
-  suitability = 100 x momentum x room x adjacency x (1 - 0.8 x fire risk)
+  suitability = 100 x momentum x room x flat share x adjacency x (1 - FIRE_PENALTY x fire risk)
+  (FIRE_PENALTY = 0.4: a cell at maximum fire risk keeps 60% of its score)
 
 Adjacent high-scoring cells are merged into ranked "zones". A backtest re-runs the model as of
 earlier years and measures how many homes built in the following 5 years landed in the cells it
@@ -34,11 +35,13 @@ from sklearn.cluster import DBSCAN
 from sklearn.neighbors import NearestNeighbors
 
 from common import AOI_BBOX, OVERTURE_RELEASE, PROCESSED, RAW, WEB_DATA, arcgis_query, write_geojson, write_json
+from terrain import RES as DEM_RES, SLOPE_MAX, SLOPE_OK, cell_terrain, load_dem_slope
 
 ALBERS, CELL = 3310, 500
 YEAR = 2025
 BACKTEST_YEARS = [2010, 2013, 2016, 2019]
 WINDOW = 5
+FIRE_PENALTY = 0.4  # max share of a cell's score removed by fire risk
 AHEAD_M, SIGMA_M = 1500, 1200
 COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 DELTA_URL = "https://gis.water.ca.gov/arcgis/rest/services/Boundaries/i03_Delta_PrimarySecondary_Zones/FeatureServer/0"
@@ -103,7 +106,18 @@ det = gpd.sjoin(gpd.GeoDataFrame(geometry=rings, crs=ALBERS), wild[["geometry"]]
 cells["wild_det_5km"] = det.groupby(level=0).size().reindex(cells.index).fillna(0).values
 cells["fire_risk"] = (0.5 * cells["fhsz"] + 0.3 * (cells["burn_frac_5km"] / 0.25).clip(0, 1)
                       + 0.2 * ((cells["wild_det_5km"] / (rings.area / 1e8)) / 50).clip(0, 1)).clip(0, 1)
-excluded = cells["in_primary_zone"] | (cells["water_frac"] > 0.4)
+# --- terrain (USGS 3DEP, 25 m slope) ------------------------------------------------------------
+print("Terrain ...")
+elev, slope, dem_tr = load_dem_slope()
+lower_left = [(g.bounds[0], g.bounds[1]) for g in cells.geometry]
+ter = pd.DataFrame(cell_terrain(lower_left, elev, slope, dem_tr, CELL),
+                   columns=["elev_m", "slope_mean", "flat_share", "hillside_share", "terrain"])
+for c in ter.columns:
+    cells[c] = ter[c].values
+cells["too_steep"] = cells["terrain"] < 0.2
+print(f"  {int(cells['too_steep'].sum()):,} cells too steep (<20% of land under {SLOPE_OK:.0f}% slope)")
+
+excluded = cells["in_primary_zone"] | (cells["water_frac"] > 0.4) | cells["too_steep"]
 
 # --- buildings ----------------------------------------------------------------------------------
 b = gpd.read_parquet(PROCESSED / "buildings.parquet").to_crs(ALBERS)
@@ -170,7 +184,8 @@ def score(year):
             lat = -vx * u[1] + vy * u[0]
             mom += w * np.exp(-((along - AHEAD_M) ** 2 + lat ** 2) / (2 * SIGMA_M ** 2))
     mom = np.clip(mom / np.percentile(mom[mom > 0], 99), 0, 1) if (mom > 0).any() else mom
-    s = 100 * mom * room * adjacency * (1 - 0.8 * cells["fire_risk"].values)
+    # open land only counts where the ground is flat enough to build on
+    s = 100 * mom * room * cells["terrain"].values * adjacency * (1 - FIRE_PENALTY * cells["fire_risk"].values)
     s[excluded.values] = 0
     return pd.DataFrame({"score": s, "momentum": mom, "room": room, "adjacency": adjacency,
                          "built_frac": built_frac.values})
@@ -225,7 +240,13 @@ for z in zones.geometry:
     pc = pl.geometry.representative_point()
     brg = (math.degrees(math.atan2(cen.x - pc.x, cen.y - pc.y)) + 360) % 360
     side = COMPASS[int((brg + 22.5) // 45) % 8]
-    if edge_km < 0.75:
+    # zones that reach two or more cities (within 1.5 km) are named after the two they touch most
+    touching = big.assign(d=big.distance(z)).query("d < 1500")
+    if len(touching) >= 2:
+        share = touching.geometry.buffer(1500).intersection(z).area.sort_values(ascending=False)
+        a, b = big.loc[share.index[:2], "name"]
+        label = f"Between {a} and {b}"
+    elif edge_km < 0.75:
         label = f"{pl['name']} – {side} side"
     else:
         label = f"{edge_km:.1f} km {side} of {pl['name']} city limits"
@@ -235,6 +256,9 @@ for z in zones.geometry:
         "acres": round(float(((1 - zc["built_frac"]) * area).sum() / 4046.86)),
         "momentum": round(float(zc["momentum"].mean()), 2),
         "fire_risk": round(float(zc["fire_risk"].mean()), 2),
+        "slope_mean": round(float(zc["slope_mean"].mean()), 1),
+        "flat_share": round(float(zc["flat_share"].mean()), 2),
+        "elev_m": round(float(zc["elev_m"].mean())),
         "fhsz": ", ".join(sorted(set(zc["fhsz_class"]) - {"None"})) or "None",
         "burn_frac_5km": round(float(zc["burn_frac_5km"].mean()), 3),
         "geometry": z,
@@ -249,7 +273,10 @@ out_cells = cells[cells["score"] >= 5].copy()
 out_cells["fire_risk"] = out_cells["fire_risk"].round(2)
 out_cells["momentum"] = out_cells["momentum"].round(2)
 out_cells["adjacency"] = out_cells["adjacency"].round(2)
-write_geojson(out_cells[["score", "momentum", "room", "adjacency", "fire_risk", "fhsz_class", "geometry"]].to_crs(4326),
+for c, d in (("slope_mean", 1), ("flat_share", 2), ("terrain", 2), ("elev_m", 0)):
+    out_cells[c] = out_cells[c].round(d)
+write_geojson(out_cells[["score", "momentum", "room", "terrain", "flat_share", "slope_mean", "elev_m", "adjacency",
+                         "fire_risk", "fhsz_class", "geometry"]].to_crs(4326),
               WEB_DATA / "recommend_cells.geojson")
 
 pts = zw.copy()
@@ -260,6 +287,32 @@ write_json({
               for r, p in zip(zw.to_dict("records"), pts.geometry)],
     "backtest": backtest,
     "excluded": {"delta_primary_zone_cells": int(cells["in_primary_zone"].sum()),
-                 "water_cells": int((cells["water_frac"] > 0.4).sum())},
+                 "water_cells": int((cells["water_frac"] > 0.4).sum()),
+                 "too_steep_cells": int(cells["too_steep"].sum())},
+    "fire_penalty": FIRE_PENALTY,
+    "terrain": {"slope_ok_pct": SLOPE_OK, "slope_max_pct": SLOPE_MAX, "dem": "USGS 3DEP 1 arc-second"},
 }, WEB_DATA / "recommend.json")
-print(zones[["rank", "label", "score_sum", "cells", "acres", "momentum", "fire_risk", "fhsz"]].to_string(index=False))
+print(zones[["rank", "label", "score_sum", "cells", "acres", "momentum", "fire_risk", "slope_mean", "flat_share"]]
+      .to_string(index=False))
+
+# --- steep-terrain map layer: 100 m blocks classed by their dominant slope ------------------------
+from rasterio import features  # noqa: E402
+
+k = int(100 / DEM_RES)
+h, w = (slope.shape[0] // k) * k, (slope.shape[1] // k) * k
+blk = slope[:h, :w].reshape(h // k, k, w // k, k)
+share_max = np.nanmean(blk > SLOPE_MAX, axis=(1, 3))
+share_mid = np.nanmean(blk > SLOPE_OK, axis=(1, 3))
+cls = np.zeros(share_max.shape, dtype="uint8")
+cls[share_mid >= 0.5] = 1          # hillside, 15-25 %
+cls[share_max >= 0.5] = 2          # too steep, > 25 %
+tr100 = dem_tr * dem_tr.scale(k, k)
+shapes = [(shapely.geometry.shape(g), int(v)) for g, v in features.shapes(cls, mask=cls > 0, transform=tr100)]
+steep = gpd.GeoDataFrame({"cls": [v for _, v in shapes]}, geometry=[g for g, _ in shapes], crs=ALBERS)
+steep = steep.dissolve("cls").reset_index()
+steep["geometry"] = steep.geometry.intersection(cgeom.buffer(2000)).simplify(40)
+steep["label"] = steep["cls"].map({1: f"Hillside ({SLOPE_OK:.0f}–{SLOPE_MAX:.0f}% slope)",
+                                   2: f"Too steep (>{SLOPE_MAX:.0f}% slope)"})
+steep = steep.explode(index_parts=False)
+steep = steep[steep.area > 40_000]  # drop specks under 4 ha
+write_geojson(steep[["cls", "label", "geometry"]].to_crs(4326), WEB_DATA / "steep_terrain.geojson")

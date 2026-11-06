@@ -19,6 +19,7 @@ export const DATA = {
   recCells: `${base}data/recommend_cells.geojson`,
   recZones: `${base}data/recommend_zones.geojson`,
   recommend: `${base}data/recommend.json`,
+  steep: `${base}data/steep_terrain.geojson`,
 };
 
 // NAIP vintages available for San Joaquin County on Microsoft Planetary Computer
@@ -56,6 +57,9 @@ export const COLORS = {
     [100, "#0d6b49"],
   ] as [number, string][],
   suitDark: "#0d6b49",
+  // terrain: brown ordinal pair
+  hillside: "#e2cfa8",
+  steep: "#a07d4f",
   text: "#0b0b0b",
   textSecondary: "#52514e",
 };

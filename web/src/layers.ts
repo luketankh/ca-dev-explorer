@@ -3,7 +3,8 @@ import { COLORS, DATA, YEAR_MAX } from "./config";
 import { naipTileUrl, naipYearFor } from "./naip";
 
 export type FireWindow = "all" | "10y" | "year";
-export type LayerKey = "naip" | "buildings" | "arrows" | "recommend" | "fires" | "firms" | "fhsz" | "places" | "counties";
+export type LayerKey = "naip" | "buildings" | "arrows" | "recommend" | "terrain" | "steep" | "fires" | "firms" | "fhsz"
+  | "places" | "counties";
 export type CountyMetric = "premium" | "violent_per_1k" | "property_per_1k";
 
 export const COUNTY_METRICS: Record<CountyMetric, { label: string; stops: [number, string][]; fmt: (v: number) => string }> = {
@@ -34,6 +35,8 @@ export const LAYER_IDS: Record<LayerKey, string[]> = {
   places: ["places-fill", "places-line"],
   arrows: ["arrows-major", "arrows-minor", "arrows-major-infill", "arrows-minor-infill"],
   recommend: ["rec-cells", "rec-zones-line", "rec-labels"],
+  terrain: ["hillshade"],
+  steep: ["steep-fill"],
   counties: ["counties-fill", "counties-line"],
 };
 
@@ -86,6 +89,7 @@ export interface ExtraData {
   recCells: GeoJSON.FeatureCollection;
   recZones: GeoJSON.FeatureCollection;
   recLabels: GeoJSON.FeatureCollection;
+  steep: GeoJSON.FeatureCollection;
 }
 
 export function countyFill(metric: CountyMetric): ExpressionSpecification {
@@ -125,6 +129,26 @@ export function addDataLayers(map: MlMap, places: GeoJSON.FeatureCollection, wit
   const before = firstSymbolLayer(map);
 
   if (extra) {
+    // terrain: shaded relief from public elevation tiles (Terrarium encoding), under all data layers
+    map.addSource("dem", {
+      type: "raster-dem", encoding: "terrarium", tileSize: 256, maxzoom: 14,
+      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+      attribution: "Elevation: AWS Terrain Tiles (USGS 3DEP and others)",
+    });
+    map.addLayer({
+      id: "hillshade", type: "hillshade", source: "dem",
+      paint: { "hillshade-exaggeration": 0.35, "hillshade-shadow-color": "#5b5a55", "hillshade-highlight-color": "#ffffff" },
+    }, before);
+    // steep ground from USGS 3DEP slope (pipeline): hillside 15-25 %, too steep > 25 %
+    map.addSource("steep", { type: "geojson", data: extra.steep });
+    map.addLayer({
+      id: "steep-fill", type: "fill", source: "steep",
+      paint: {
+        "fill-color": ["match", ["get", "cls"], 2, COLORS.steep, COLORS.hillside],
+        "fill-opacity": 0.5,
+      },
+    }, before);
+
     // statewide county comparison (insurance / crime); fades out as you zoom into the county
     map.addSource("counties", { type: "geojson", data: extra.counties, promoteId: "GEOID" });
     map.addLayer({

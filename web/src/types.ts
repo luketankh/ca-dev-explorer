@@ -75,6 +75,9 @@ export interface RecZone {
   fire_risk: number;
   fhsz: string;
   burn_frac_5km: number;
+  slope_mean: number;
+  flat_share: number;
+  elev_m: number;
   lon: number;
   lat: number;
 }
@@ -87,7 +90,9 @@ export interface Recommend {
   zones: RecZone[];
   backtest: { as_of: number; predicts: string; homes_built: number; top_area_pct: number;
     captured_pct: number; baseline_pct: number }[];
-  excluded: { delta_primary_zone_cells: number; water_cells: number };
+  excluded: { delta_primary_zone_cells: number; water_cells: number; too_steep_cells: number };
+  terrain: { slope_ok_pct: number; slope_max_pct: number; dem: string };
+  fire_penalty: number;
 }
 
 export interface Stats {

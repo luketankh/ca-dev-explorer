@@ -75,7 +75,7 @@ export default function Report({ stats, places, selected, year, context, arrows,
           <h3>Where to build next</h3>
           <div className="caption" style={{ marginTop: 0 }}>
             Ranked zones of mostly open land just ahead of where homes went in {recommend.window}, next to
-            existing towns, penalised for wildfire risk. Click a zone to fly there.
+            existing towns, on flat ground, penalised for wildfire risk. Click a zone to fly there.
           </div>
           <table className="rank rec">
             <thead>
@@ -85,7 +85,9 @@ export default function Report({ stats, places, selected, year, context, arrows,
               {recommend.zones.map((z) => (
                 <tr key={z.rank} className={p && z.place === p.name ? "sel" : ""} onClick={() => onZone(z.lon, z.lat)}>
                   <td><span className="rec-rank">{z.rank}</span></td>
-                  <td>{z.label}{z.fhsz !== "None" && <div className="kpi-note">Hazard zone: {z.fhsz}</div>}</td>
+                  <td>{z.label}
+                    <div className="kpi-note">Avg slope {fmt(z.slope_mean, 1)}% · {pct(z.flat_share)} flat
+                      {z.fhsz !== "None" ? ` · Hazard zone: ${z.fhsz}` : ""}</div></td>
                   <td className="num">{fmt(z.acres)}</td>
                   <td className="num">{pct(z.momentum)}</td>
                   <td className="num">{pct(z.fire_risk)}</td>
@@ -96,16 +98,20 @@ export default function Report({ stats, places, selected, year, context, arrows,
           <details className="method">
             <summary>How this is calculated, and how well it worked in the past</summary>
             <p>The county is cut into {recommend.cell_m} m cells. Each cell scores
-              <b> 100 × growth momentum × open land × next to town × (1 − 0.8 × fire risk)</b>:</p>
+              <b> 100 × growth momentum × open land × flat share × next to town × (1 − {recommend.fire_penalty} × fire risk)</b>.
+              At maximum fire risk a cell keeps {Math.round((1 - recommend.fire_penalty) * 100)}% of its score.</p>
             <ul>
               <li><b>Growth momentum:</b> how far the cell lies in the path of the growth arrows: 1.5 km ahead
                 of each cluster of new homes, along its direction, weighted by the cluster's size.</li>
               <li><b>Open land:</b> building footprint under 6% of the cell (6–12% counts half).</li>
+              <li><b>Flat share (terrain):</b> share of the cell with slope ≤ {recommend.terrain.slope_ok_pct}%, plus half the
+                share at {recommend.terrain.slope_ok_pct}–{recommend.terrain.slope_max_pct}% (hillside, costly grading).
+                Steeper land doesn't count. Slope from {recommend.terrain.dem} elevation.</li>
               <li><b>Next to town:</b> within 1 km of built-up land, fading to zero at 4 km.</li>
               <li><b>Fire risk:</b> hazard zone at the cell (50%), share of land within 5 km burned since 2000 (30%),
                 wildland satellite fire detections within 5 km (20%).</li>
-              <li><b>Excluded:</b> the Delta Primary Zone (Delta Protection Act; {fmt(recommend.excluded.delta_primary_zone_cells)} cells)
-                and mostly-water cells.</li>
+              <li><b>Excluded:</b> the Delta Primary Zone (Delta Protection Act; {fmt(recommend.excluded.delta_primary_zone_cells)} cells),
+                mostly-water cells, and {fmt(recommend.excluded.too_steep_cells)} cells that are too steep (under 20% flat land).</li>
             </ul>
             <p><b>Backtest:</b> using only data available at the time, the top 5% of the county picked by the model
               contained this share of the homes actually built in the next five years:</p>

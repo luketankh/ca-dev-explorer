@@ -27,7 +27,9 @@ const LAYER_LABELS: [LayerKey, string, string][] = [
   ["naip", "Aerial imagery (NAIP)", "USDA NAIP via Planetary Computer, zoom in to view"],
   ["buildings", "Buildings by year built", "Overture Maps + County Assessor + Microsoft 2020"],
   ["arrows", "Growth direction arrows", "Where homes built in the last 5 years went, vs existing homes"],
-  ["recommend", "Where to build next (2026+)", "Growth momentum × open land × next to town × fire risk"],
+  ["recommend", "Where to build next (2026+)", "Growth momentum × flat open land × next to town × fire risk"],
+  ["terrain", "Terrain (shaded relief)", "Elevation tiles: USGS 3DEP via AWS Terrain Tiles"],
+  ["steep", "Steep ground", "Slope from USGS 3DEP 30 m: hillside 15–25%, too steep >25%"],
   ["fires", "Fire perimeters", "NIFC interagency fire history"],
   ["firms", "Fire detection heatmap", "NASA FIRMS MODIS, 2001–2025"],
   ["fhsz", "Fire Hazard Severity Zones", "CAL FIRE, SRA 2024 / LRA 2025"],
@@ -44,6 +46,9 @@ function pointInRing([x, y]: number[], ring: number[][]): boolean {
   return inside;
 }
 
+// fire penalty used by the model (read from recommend.json on load)
+let firePenalty = 0.4;
+
 function recPopup(cell: MapGeoJSONFeature | undefined, zone: { properties: unknown } | undefined) {
   const c = (cell?.properties ?? {}) as Record<string, number | string>;
   const z = (zone?.properties ?? {}) as Record<string, number | string>;
@@ -54,10 +59,11 @@ function recPopup(cell: MapGeoJSONFeature | undefined, zone: { properties: unkno
     <tr><th>Cell score</th><td><b>${esc(c.score)}</b> / 100</td></tr>
     <tr><th>Growth momentum</th><td>${pct(c.momentum)}</td></tr>
     <tr><th>Next to town</th><td>${pct(c.adjacency)}</td></tr>
+    <tr><th>Terrain</th><td>${pct(c.flat_share)} flat (≤15% slope) · avg slope ${esc(c.slope_mean)}% · ${esc(c.elev_m)} m</td></tr>
     <tr><th>Open land</th><td>${Number(c.room) === 1 ? "Yes" : Number(c.room) > 0 ? "Partly built" : "Built up"}</td></tr>
     <tr><th>Fire risk</th><td>${pct(c.fire_risk)}${c.fhsz_class && c.fhsz_class !== "None" ? ` · FHSZ ${esc(c.fhsz_class)}` : ""}</td></tr>` : "";
   return `<div class="pop"><h4>${head}</h4><table>${zoneRows}${cellRows}</table>
-    <div class="pop-id">500 m cell. Score = 100 × momentum × open land × next to town × (1 − 0.8 × fire risk).</div></div>`;
+    <div class="pop-id">500 m cell. Score = 100 × momentum × open land × flat share × next to town × (1 − ${firePenalty} × fire risk).</div></div>`;
 }
 
 function arrowPopup(f: MapGeoJSONFeature) {
@@ -136,7 +142,7 @@ export default function App() {
   const [fireWindow, setFireWindow] = useState<FireWindow>("all");
   const [vis, setVis] = useState<Visibility>({
     naip: false, buildings: true, arrows: true, fires: true, firms: false, fhsz: true, places: true,
-    counties: true, recommend: true,
+    counties: true, recommend: true, terrain: true, steep: true,
   });
   const [recommend, setRecommend] = useState<Recommend | null>(null);
   const [buildingUse, setBuildingUse] = useState<BuildingUse>("all");
@@ -158,8 +164,8 @@ export default function App() {
   useEffect(() => {
     const get = (u: string) => fetch(u).then((r) => r.json());
     Promise.all([get(DATA.stats), get(DATA.places), get(DATA.counties), get(DATA.arrows), get(DATA.context),
-      get(DATA.recCells), get(DATA.recZones), get(DATA.recommend)]).then(
-      ([s, p, c, a, ctx, rc, rz, rec]) => {
+      get(DATA.recCells), get(DATA.recZones), get(DATA.recommend), get(DATA.steep)]).then(
+      ([s, p, c, a, ctx, rc, rz, rec, steep]) => {
         setStats(s);
         const recLabels: GeoJSON.FeatureCollection = {
           type: "FeatureCollection",
@@ -167,8 +173,9 @@ export default function App() {
             type: "Feature", properties: { rank: z.rank }, geometry: { type: "Point", coordinates: [z.lon, z.lat] },
           })),
         };
-        setExtra({ counties: c, arrows: a, recCells: rc, recZones: rz, recLabels });
+        setExtra({ counties: c, arrows: a, recCells: rc, recZones: rz, recLabels, steep });
         setRecommend(rec);
+        firePenalty = (rec as Recommend).fire_penalty ?? firePenalty;
         setContext(ctx);
         setPlacesFc(p);
       },
@@ -459,6 +466,9 @@ export default function App() {
           }} />
           <div className="ramp-labels"><span>Low</span><span>Medium</span><span>High</span></div>
           <div className="sw"><i style={{ border: `2px dashed ${COLORS.suitDark}`, background: "transparent" }} />Ranked zone (number = rank)</div>
+          <div className="legend-title">Steep ground (slope)</div>
+          <div className="sw"><i style={{ background: COLORS.hillside }} />Hillside 15–25%: costly to build</div>
+          <div className="sw"><i style={{ background: COLORS.steep }} />Over 25%: generally not buildable</div>
           {vis.counties && (
             <>
               <div className="legend-title">Counties: {COUNTY_METRICS[countyMetric].label}</div>

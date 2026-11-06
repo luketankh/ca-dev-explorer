@@ -19,13 +19,13 @@ context, and a ranked "where to build next" recommendation with a backtest.
   - 01 boundaries · 02 Overture buildings · 03 Microsoft 2020 footprints · 04 assessor parcels
   - 05–07 fire perimeters / FIRMS / hazard zones · 08 assigns a year to each building
   - 09 per-place stats + scores · 10 PMTiles (`tiler.py`) · 11 insurance + crime
-  - 12 growth arrows · 13 where-to-build-next model + backtest
+  - 12 growth arrows · 13 where-to-build-next model + backtest (terrain from `terrain.py`)
 - `web/`: Vite + React + TypeScript + MapLibre GL + PMTiles. `src/App.tsx` (map, sidebar, popups),
   `src/layers.ts` (all map layers, filters, colours), `src/components/Report.tsx` (right panel),
   `src/config.ts` (years, data URLs, colour ramps), `src/types.ts` (data shapes).
 - `data/` (git-ignored): raw downloads and intermediate files.
 - `web/public/data/` (git-ignored): what the app loads. Get it with `./fetch_data.sh`
-  (GitHub release `data-v1`) or rebuild with `./run_pipeline.sh`.
+  (GitHub release `data-v2`) or rebuild with `./run_pipeline.sh`.
 
 ## Commands
 
@@ -57,9 +57,12 @@ There is no test suite yet. Verify changes by type-checking, building, and openi
   outside them they are mostly agricultural burning.
 - **Growth arrows** = DBSCAN clusters (350 m) of homes built in the last 5 years, pointing away from
   existing homes within 2 km. Infill (< 150 m shift) is drawn as a circle. Arrows are screen-sized icons.
-- **Recommendation** (`13_recommend.py`): 500 m cells, score = 100 × momentum × open land × next to
-  town × (1 − 0.8 × fire risk). The Delta Primary Zone and water are excluded. Backtest: the top 5%
-  of cells captured 47–56% of the next 5 years' homes (vs 25–35% for an edge-of-town rule). If you change
+- **Terrain** (`terrain.py`): USGS 3DEP 1 arc-second tiles, cached in `data/raw/dem/`, slope at 25 m on a grid
+  aligned to the 500 m cells. ≤ 15% buildable, 15–25% counts half, > 25% not buildable; cells with < 20% flat
+  land are excluded. In San Joaquin this mostly removes the SW (Corral Hollow / Altamont) and eastern foothills.
+- **Recommendation** (`13_recommend.py`): 500 m cells, score = 100 × momentum × open land × flat share × next to
+  town × (1 − 0.4 × fire risk) (`FIRE_PENALTY`; was 0.8, relaxed on request). The Delta Primary Zone and water are excluded. Backtest: the top 5%
+  of cells captured 48–56% of the next 5 years' homes (vs 25–35% for an edge-of-town rule). If you change
   the model, re-run the backtest and update the README table.
 - **Insurance** (HearthMap/NBER, CC BY 4.0, attribution required) is county-level only. **Crime**
   (CA DOJ) is per police agency; Sheriff-patrolled places (incl. Mountain House) share the Sheriff's rate.
