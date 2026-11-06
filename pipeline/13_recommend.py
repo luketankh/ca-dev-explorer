@@ -24,7 +24,8 @@ Adjacent high-scoring cells are merged into ranked "zones". A backtest re-runs t
 earlier years and measures how many homes built in the following 5 years landed in the cells it
 ranked highest.
 
-Outputs (web/public/data): recommend_cells.geojson, recommend_zones.geojson, recommend.json
+Outputs (web/public/data): recommend_cells.pmtiles (cells for every year), recommend_zones.geojson
+(top-10 zones per year), recommend.json (zones by year, what happened next, backtest)
 """
 import math
 
@@ -196,104 +197,157 @@ def score(year):
     return pd.concat([out, fire.reset_index(drop=True)], axis=1)
 
 
-# --- backtest -----------------------------------------------------------------------------------
-backtest = []
-for y in BACKTEST_YEARS:
-    s = score(y)["score"].values
-    future = res_mask & b["y"].between(y + 1, y + WINDOW)
-    homes_per_cell = b.loc[future].groupby("cell").size().reindex(cells.index).fillna(0).values
-    order = np.argsort(-s)
-    top = order[: int(0.05 * len(cells))]
-    top = top[s[top] > 0]
-    captured = homes_per_cell[top].sum() / max(homes_per_cell.sum(), 1)
-    # baseline: same number of undeveloped cells closest to existing development (no direction)
-    base = score(y)
-    base_s = base["room"] * base["adjacency"] * (~excluded).values
-    base_top = np.argsort(-(base_s.values + np.random.default_rng(0).random(len(cells)) * 1e-6))[: len(top)]
-    base_cap = homes_per_cell[base_top].sum() / max(homes_per_cell.sum(), 1)
-    backtest.append({"as_of": y, "predicts": f"{y + 1}–{y + WINDOW}", "homes_built": int(homes_per_cell.sum()),
-                     "top_cells": int(len(top)), "top_area_pct": round(100 * len(top) / len(cells), 1),
-                     "captured_pct": round(100 * captured, 1), "baseline_pct": round(100 * base_cap, 1)})
-    print(f"  backtest {y}: top {len(top)} cells ({100 * len(top) / len(cells):.1f}% of county) captured "
-          f"{100 * captured:.1f}% of homes built {y + 1}-{y + WINDOW} (edge-of-town baseline {100 * base_cap:.1f}%)")
-
-# --- current recommendation ---------------------------------------------------------------------
-cur = score(YEAR)
-for c in cur.columns:
-    cells[c] = cur[c].values
-cells["score"] = cells["score"].round(1)
-
+# --- one prediction per year ----------------------------------------------------------------------
+# Every year from 2000 gets its own recommendation using only what was known then (homes built,
+# growth clusters, fires). The app shows the prediction for the slider year.
+PRED_YEARS = list(range(2000, YEAR + 1))
 THRESH = 30
-hot = cells[cells["score"] >= THRESH]
-zones = gpd.GeoDataFrame(geometry=list(hot.geometry.union_all().buffer(1).geoms)
-                         if hot.geometry.union_all().geom_type == "MultiPolygon" else [hot.geometry.union_all()],
-                         crs=ALBERS)
-place_pts = places.copy()
-place_pts["c"] = places.representative_point()
-zone_rows = []
-for z in zones.geometry:
-    zc = hot[hot.centroid.within(z)]
-    if zc.empty:
-        continue
-    total = float(zc["score"].sum())
+TOP_SHARE = 0.05
+STATIC = ["geometry", "fhsz_class", "flat_share", "slope_mean", "elev_m", "terrain"]
+big_places = places[places["kind"] == "City"]
+
+
+def homes_built(y0, y1):
+    """Residential homes per cell built in years y0..y1."""
+    fut = res_mask & b["y"].between(y0, y1)
+    return b.loc[fut].groupby("cell").size().reindex(cells.index).fillna(0).values
+
+
+def name_zone(z):
+    """Name a zone after the city/cities it touches, or its distance and direction from the nearest one."""
     cen = z.centroid
-    # name the zone after the nearest city/CDP *boundary* (big cities make centre distances misleading)
-    big = places[places["kind"] == "City"]
-    d_edge = big.distance(cen)
-    pl = big.loc[d_edge.idxmin()]
+    d_edge = big_places.distance(cen)
+    pl = big_places.loc[d_edge.idxmin()]
     edge_km = float(d_edge.min()) / 1000
     pc = pl.geometry.representative_point()
     brg = (math.degrees(math.atan2(cen.x - pc.x, cen.y - pc.y)) + 360) % 360
     side = COMPASS[int((brg + 22.5) // 45) % 8]
-    # zones that reach two or more cities (within 1.5 km) are named after the two they touch most
-    touching = big.assign(d=big.distance(z)).query("d < 1500")
+    touching = big_places.assign(d=big_places.distance(z)).query("d < 1500")
     if len(touching) >= 2:
         share = touching.geometry.buffer(1500).intersection(z).area.sort_values(ascending=False)
-        a, b = big.loc[share.index[:2], "name"]
-        label = f"Between {a} and {b}"
-    elif edge_km < 0.75:
-        label = f"{pl['name']} – {side} side"
-    else:
-        label = f"{edge_km:.1f} km {side} of {pl['name']} city limits"
-    zone_rows.append({
-        "label": label, "place": pl["name"], "score_sum": round(total, 1),
-        "score_max": round(float(zc["score"].max()), 1), "cells": int(len(zc)),
-        "acres": round(float(((1 - zc["built_frac"]) * area).sum() / 4046.86)),
-        "momentum": round(float(zc["momentum"].mean()), 2),
-        "fire_risk": round(float(zc["fire_risk"].mean()), 2),
-        "slope_mean": round(float(zc["slope_mean"].mean()), 1),
-        "flat_share": round(float(zc["flat_share"].mean()), 2),
-        "elev_m": round(float(zc["elev_m"].mean())),
-        "fhsz": ", ".join(sorted(set(zc["fhsz_class"]) - {"None"})) or "None",
-        "fire_history": round(float(zc["fire_history"].mean()), 2),
-        "years_since_fire": (None if zc["years_since_fire"].isna().all() else int(zc["years_since_fire"].min())),
-        "fires_weighted": round(float(zc["fires_weighted"].mean()), 2),
-        "geometry": z,
-    })
-zones = gpd.GeoDataFrame(zone_rows, crs=ALBERS).sort_values("score_sum", ascending=False).reset_index(drop=True)
-zones["rank"] = zones.index + 1
-zones = zones[zones["rank"] <= 10]
-zw = zones.to_crs(4326)
-write_geojson(zw, WEB_DATA / "recommend_zones.geojson")
+        first, second = big_places.loc[share.index[:2], "name"]
+        return f"Between {first} and {second}", pl["name"]
+    if edge_km < 0.75:
+        return f"{pl['name']} – {side} side", pl["name"]
+    return f"{edge_km:.1f} km {side} of {pl['name']} city limits", pl["name"]
 
-out_cells = cells[cells["score"] >= 5].copy()
-for c in ("fire_risk", "fire_history", "fire_freq", "fire_reburn", "fire_last", "fire_detections"):
-    out_cells[c] = out_cells[c].round(2)
-out_cells["momentum"] = out_cells["momentum"].round(2)
-out_cells["adjacency"] = out_cells["adjacency"].round(2)
-for c, d in (("slope_mean", 1), ("flat_share", 2), ("terrain", 2), ("elev_m", 0)):
-    out_cells[c] = out_cells[c].round(d)
-write_geojson(out_cells[["score", "momentum", "room", "terrain", "flat_share", "slope_mean", "elev_m", "adjacency",
-                         "fire_risk", "fire_history", "fire_freq", "fire_reburn", "fire_last", "fire_detections",
-                         "years_since_fire", "fhsz_class", "geometry"]].to_crs(4326),
-              WEB_DATA / "recommend_cells.geojson")
 
-pts = zw.copy()
-pts["geometry"] = zones.geometry.representative_point().to_crs(4326).values
+def zones_for(cy):
+    """Merge touching cells scoring >= THRESH into zones; return the top 10 (Albers)."""
+    hot = cy[cy["score"] >= THRESH]
+    if hot.empty:
+        return gpd.GeoDataFrame(geometry=[], crs=ALBERS)
+    u = hot.geometry.union_all().buffer(1)
+    rows = []
+    for z in (list(u.geoms) if u.geom_type == "MultiPolygon" else [u]):
+        zc = hot[hot.centroid.within(z)]
+        if zc.empty:
+            continue
+        label, place = name_zone(z)
+        rows.append({
+            "label": label, "place": place, "score_sum": round(float(zc["score"].sum()), 1),
+            "score_max": round(float(zc["score"].max()), 1), "cells": int(len(zc)),
+            "acres": round(float(((1 - zc["built_frac"]) * area).sum() / 4046.86)),
+            "momentum": round(float(zc["momentum"].mean()), 2),
+            "fire_risk": round(float(zc["fire_risk"].mean()), 2),
+            "slope_mean": round(float(zc["slope_mean"].mean()), 1),
+            "flat_share": round(float(zc["flat_share"].mean()), 2),
+            "elev_m": round(float(zc["elev_m"].mean())),
+            "fhsz": ", ".join(sorted(set(zc["fhsz_class"]) - {"None"})) or "None",
+            "fire_history": round(float(zc["fire_history"].mean()), 2),
+            "years_since_fire": (None if zc["years_since_fire"].isna().all() else int(zc["years_since_fire"].min())),
+            "geometry": z.simplify(15),  # merged squares carry many redundant vertices
+        })
+    zs = gpd.GeoDataFrame(rows, crs=ALBERS).sort_values("score_sum", ascending=False).reset_index(drop=True)
+    zs["rank"] = zs.index + 1
+    return zs[zs["rank"] <= 10]
+
+
+cell_frames, zone_frames, by_year, results = [], [], {}, {}
+for y in PRED_YEARS:
+    cur = score(y)
+    results[y] = cur
+    cy = cells[STATIC].copy()
+    for c in cur.columns:
+        cy[c] = cur[c].values
+    cy["score"] = cy["score"].round(1)
+    zs = zones_for(cy)
+    zs["year"] = y
+
+    # what actually happened next (complete 5-year window up to 2020; partial after)
+    y_end = min(y + WINDOW, YEAR)
+    nxt = None
+    if y_end > y:
+        hpc = homes_built(y + 1, y_end)
+        total = hpc.sum()
+        in_zone = cy["score"].values >= THRESH
+        s = cy["score"].values
+        top = np.argsort(-s)[: int(TOP_SHARE * len(cells))]
+        top = top[s[top] > 0]
+        nxt = {"period": f"{y + 1}–{y_end}", "complete": y + WINDOW <= YEAR, "homes_built": int(total),
+               "in_zones_pct": round(100 * hpc[in_zone].sum() / total, 1) if total else None,
+               "zone_area_pct": round(100 * in_zone.mean(), 1),
+               "top5_pct": round(100 * hpc[top].sum() / total, 1) if total else None}
+    zl = zs.to_crs(4326)
+    lab = zs.geometry.representative_point().to_crs(4326) if len(zs) else []
+    by_year[str(y)] = {
+        "window": f"{y - WINDOW + 1}–{y}",
+        "zones": [{k: v for k, v in r.items() if k not in ("geometry", "year")} | {"lon": round(p.x, 5), "lat": round(p.y, 5)}
+                  for r, p in zip(zl.to_dict("records"), lab)],
+        "next": nxt,
+    }
+    zone_frames.append(zl)
+    keep = cy[cy["score"] >= 5].copy()
+    keep["year"] = y
+    cell_frames.append(keep)
+    msg = f"  {y}: {len(zs)} zones" + (f" · next {nxt['period']}: {nxt['in_zones_pct']}% of {nxt['homes_built']:,} homes "
+                                        f"landed in zones ({nxt['zone_area_pct']}% of county)" if nxt and nxt["homes_built"] else "")
+    print(msg)
+
+# --- backtest summary (top 5% of cells vs an edge-of-town rule) -------------------------------------
+backtest = []
+for y in BACKTEST_YEARS:
+    r = results[y]
+    s = r["score"].values
+    hpc = homes_built(y + 1, y + WINDOW)
+    top = np.argsort(-s)[: int(TOP_SHARE * len(cells))]
+    top = top[s[top] > 0]
+    captured = hpc[top].sum() / max(hpc.sum(), 1)
+    base_s = r["room"] * r["adjacency"] * (~excluded).values
+    base_top = np.argsort(-(base_s.values + np.random.default_rng(0).random(len(cells)) * 1e-6))[: len(top)]
+    base_cap = hpc[base_top].sum() / max(hpc.sum(), 1)
+    backtest.append({"as_of": y, "predicts": f"{y + 1}–{y + WINDOW}", "homes_built": int(hpc.sum()),
+                     "top_cells": int(len(top)), "top_area_pct": round(100 * len(top) / len(cells), 1),
+                     "captured_pct": round(100 * captured, 1), "baseline_pct": round(100 * base_cap, 1)})
+    print(f"  backtest {y}: top {len(top)} cells captured {100 * captured:.1f}% of homes built "
+          f"{y + 1}-{y + WINDOW} (edge-of-town baseline {100 * base_cap:.1f}%)")
+
+# --- outputs -----------------------------------------------------------------------------------
+from tiler import make_pmtiles  # noqa: E402
+
+allz = gpd.GeoDataFrame(pd.concat(zone_frames, ignore_index=True), crs=4326)
+write_geojson(allz, WEB_DATA / "recommend_zones.geojson")
+
+allc = gpd.GeoDataFrame(pd.concat(cell_frames, ignore_index=True), crs=ALBERS)
+for c in ("fire_risk", "fire_history", "fire_freq", "fire_reburn", "fire_last", "fire_detections", "momentum",
+          "adjacency", "flat_share", "terrain"):
+    allc[c] = allc[c].round(2)
+allc["slope_mean"] = allc["slope_mean"].round(1)
+allc["elev_m"] = allc["elev_m"].round(0)
+CELL_PROPS = ["year", "score", "momentum", "room", "terrain", "flat_share", "slope_mean", "elev_m", "adjacency",
+              "fire_risk", "fire_history", "fire_freq", "fire_reburn", "fire_last", "fire_detections",
+              "years_since_fire", "fhsz_class"]
+make_pmtiles(allc[CELL_PROPS + ["geometry"]], WEB_DATA / "recommend_cells.pmtiles", "rec", 8, 13, CELL_PROPS,
+             simplify_px=0, buffer_px=2, attribution="CA Development Explorer model")
+old = WEB_DATA / "recommend_cells.geojson"
+if old.exists():
+    old.unlink()
+
+latest = by_year[str(YEAR)]
 write_json({
-    "as_of": YEAR, "window": f"{YEAR - WINDOW + 1}–{YEAR}", "cell_m": CELL, "threshold": THRESH,
-    "zones": [{k: v for k, v in r.items() if k != "geometry"} | {"lon": round(p.x, 5), "lat": round(p.y, 5)}
-              for r, p in zip(zw.to_dict("records"), pts.geometry)],
+    "as_of": YEAR, "first_year": PRED_YEARS[0], "window": latest["window"], "cell_m": CELL, "threshold": THRESH,
+    "zones": latest["zones"],
+    "by_year": by_year,
     "backtest": backtest,
     "excluded": {"delta_primary_zone_cells": int(cells["in_primary_zone"].sum()),
                  "water_cells": int((cells["water_frac"] > 0.4).sum()),
@@ -303,8 +357,7 @@ write_json({
     "fire_method": FIRE_METHOD,
     "terrain": {"slope_ok_pct": SLOPE_OK, "slope_max_pct": SLOPE_MAX, "dem": "USGS 3DEP 1 arc-second"},
 }, WEB_DATA / "recommend.json")
-print(zones[["rank", "label", "score_sum", "cells", "acres", "momentum", "fire_risk", "slope_mean", "flat_share"]]
-      .to_string(index=False))
+print(pd.DataFrame(latest["zones"])[["rank", "label", "cells", "acres", "momentum", "fire_risk"]].to_string(index=False))
 
 # --- steep-terrain map layer: 100 m blocks classed by their dominant slope ------------------------
 from rasterio import features  # noqa: E402

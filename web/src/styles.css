@@ -47,19 +47,6 @@ h1, h2, h3, h4 { margin: 0; }
 /* map */
 .mapwrap { position: relative; }
 .map { position: absolute; inset: 0; }
-.map.cmp { pointer-events: none; z-index: 1; }
-.swipe { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; z-index: 2; box-shadow: 0 0 4px rgba(0,0,0,.4); transform: translateX(-1px); }
-.swipe-handle {
-  position: absolute; top: 50%; left: -16px; width: 34px; height: 34px; border-radius: 50%;
-  background: #fff; display: grid; place-items: center; cursor: ew-resize; box-shadow: 0 1px 4px rgba(0,0,0,.35);
-  font-size: 16px; user-select: none; touch-action: none;
-}
-.cmp-tag {
-  position: absolute; top: 12px; z-index: 2; background: rgba(11,11,11,.8); color: #fff;
-  padding: 3px 8px; border-radius: 4px; font-weight: 600;
-}
-.cmp-tag.left { left: 12px; }
-.cmp-tag.right { right: 56px; }
 .hint {
   position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 2;
   background: rgba(255,255,255,.92); padding: 5px 10px; border-radius: 6px; color: var(--text-2);
@@ -119,9 +106,9 @@ table.rank tr:hover td { background: var(--surface-2); }
 table.rank tr.sel td { background: #e6effb; }
 .method { margin-top: 10px; color: var(--text-2); font-size: 12px; }
 .method summary { cursor: pointer; color: var(--accent); }
-/* keep popups and controls above the swipe-compare overlay */
+/* keep popups and controls above other map overlays */
 .mapwrap .maplibregl-popup { z-index: 5; }
-.mapwrap .maplibregl-ctrl-top-right, .mapwrap .maplibregl-ctrl-bottom-right { z-index: 4; }
+.mapwrap .maplibregl-ctrl-top-right, .mapwrap .maplibregl-ctrl-top-left, .mapwrap .maplibregl-ctrl-bottom-right { z-index: 4; }
 
 /* growth direction */
 .arrow-sw {
@@ -158,3 +145,6 @@ table.rank.rec td { vertical-align: top; }
 .type-key { display: grid; grid-template-columns: 1fr 96px; align-items: center; gap: 8px; margin: 5px 0; }
 .type-name { color: var(--text-2); }
 .type-ramp { height: 12px; border-radius: 3px; }
+.what-next { margin: 8px 0; padding: 8px 10px; border-left: 3px solid #0d6b49; background: #eaf7f1; border-radius: 4px;
+  font-size: 12px; color: var(--text-2); }
+.what-next b { color: var(--text); }

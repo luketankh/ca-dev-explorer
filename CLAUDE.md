@@ -25,7 +25,7 @@ context, and a ranked "where to build next" recommendation with a backtest.
   `src/config.ts` (years, data URLs, colour ramps), `src/types.ts` (data shapes).
 - `data/` (git-ignored): raw downloads and intermediate files.
 - `web/public/data/` (git-ignored): what the app loads. Get it with `./fetch_data.sh`
-  (GitHub release `data-v4`) or rebuild with `./run_pipeline.sh`.
+  (GitHub release `data-v5`) or rebuild with `./run_pipeline.sh`.
 
 ## Commands
 
@@ -63,7 +63,9 @@ There is no test suite yet. Verify changes by type-checking, building, and openi
 - **Terrain** (`terrain.py`): USGS 3DEP 1 arc-second tiles, cached in `data/raw/dem/`, slope at 25 m on a grid
   aligned to the 500 m cells. ≤ 15% buildable, 15–25% counts half, > 25% not buildable; cells with < 20% flat
   land are excluded. In San Joaquin this mostly removes the SW (Corral Hollow / Altamont) and eastern foothills.
-- **Recommendation** (`13_recommend.py`): 500 m cells, score = 100 × momentum × open land × flat share × next to
+- **Recommendation** (`13_recommend.py`) runs **once per year 2000–2025**, each with only that year's data
+  (`score(year)`, fire history `as_of` that year). The app filters cells, zones and labels by `year` and shows
+  "what happened next" from `recommend.json` → `by_year`. 500 m cells, score = 100 × momentum × open land × flat share × next to
   town × (1 − fire risk)^`FIRE_EXPONENT` (= 2, progressive; history: 1 − 0.8·risk, then 1 − 0.4·risk). The Delta Primary Zone and water are excluded. Backtest: the top 5%
   of cells captured 40–56% of the next 5 years' homes (vs 25–35% for an edge-of-town rule). If you change
   the model, re-run the backtest and update the README table.
@@ -100,6 +102,9 @@ There is no test suite yet. Verify changes by type-checking, building, and openi
   grey = other; red `#e34948` = built in the slider year; validated colour-blind safe). Blue also = city growth,
   orange = fire history, magenta = hazard zones, purple = county comparison, aqua/green = recommendation,
   brown = steep ground. The old "Buildings shown" filter was replaced by this colour coding.
+- The before/after swipe-compare view was removed on purpose (buggy; the slider + arrows cover it).
+  Predictions should follow the arrows: zones are built from the same clusters, projected 1.5 km ahead
+  along each arrow. On average 86% of zone score lies within 60° ahead of the nearest arrow.
 - New data sources: add a numbered pipeline step, cache raw downloads in `data/raw/`, list the
   source and licence in the README table, and add the step to `run_pipeline.sh`.
 - After rebuilding data, publish it as a new GitHub release (`map-data.zip` with the contents of

@@ -16,7 +16,7 @@ export const DATA = {
   counties: `${base}data/counties.geojson`,
   arrows: `${base}data/growth_arrows.geojson`,
   context: `${base}data/context.json`,
-  recCells: `${base}data/recommend_cells.geojson`,
+  recCells: `pmtiles://${location.origin}${base}data/recommend_cells.pmtiles`,
   recZones: `${base}data/recommend_zones.geojson`,
   recommend: `${base}data/recommend.json`,
   steep: `${base}data/steep_terrain.geojson`,

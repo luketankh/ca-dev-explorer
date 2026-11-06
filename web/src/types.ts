@@ -92,7 +92,16 @@ export interface RecZone {
   lat: number;
 }
 
+export interface RecYear {
+  window: string;
+  zones: RecZone[];
+  next: { period: string; complete: boolean; homes_built: number; in_zones_pct: number | null;
+    zone_area_pct: number; top5_pct: number | null } | null;
+}
+
 export interface Recommend {
+  first_year: number;
+  by_year: Record<string, RecYear>;
   as_of: number;
   window: string;
   cell_m: number;

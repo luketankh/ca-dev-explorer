@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Context, PlaceMetrics, Recommend, Stats } from "../types";
 import BuiltChart from "./BuiltChart";
+import { recYearFor } from "../layers";
 
 interface Props {
   stats: Stats;
@@ -37,6 +38,8 @@ function vsState(v: number, s: number) {
 export default function Report({ stats, places, selected, year, context, arrows, recommend, onSelect, onPickYear,
   onZone }: Props) {
   const [chartUse, setChartUse] = useState<"res" | "ci">("res");
+  const recYear = recYearFor(year);
+  const rec = recommend?.by_year[String(recYear)];
   const ranked = [...places]
     .filter((p) => p.opportunity_score !== null)
     .sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0));
@@ -70,19 +73,28 @@ export default function Report({ stats, places, selected, year, context, arrows,
         </div>
       </header>
 
-      {recommend && (
+      {recommend && rec && (
         <section>
-          <h3>Where to build next</h3>
+          <h3>Where to build next · predicted in {recYear}</h3>
           <div className="caption" style={{ marginTop: 0 }}>
-            Ranked zones of mostly open land just ahead of where homes went in {recommend.window}, next to
-            existing towns, on flat ground, with higher wildfire risk penalised progressively harder. Click a zone to fly there.
+            Using only data available in {recYear}: mostly open land just ahead of where homes went in {rec.window},
+            next to existing towns, on flat ground, with higher wildfire risk penalised progressively harder.
+            Move the year slider to see each year's prediction. Click a zone to fly there.
+            {year > recYear && ` (No prediction for ${year} yet; showing the latest, ${recYear}.)`}
           </div>
+          {rec.next && rec.next.homes_built > 0 && (
+            <div className="what-next">
+              <b>What happened next:</b> of the {fmt(rec.next.homes_built)} homes built {rec.next.period},{" "}
+              <b>{rec.next.in_zones_pct}%</b> landed in these zones, which cover only {rec.next.zone_area_pct}% of the county.
+              {!rec.next.complete && " This period isn't over yet, and recent assessor records are incomplete, so treat this as early."}
+            </div>
+          )}
           <table className="rank rec">
             <thead>
               <tr><th>#</th><th>Zone</th><th className="num">Open acres</th><th className="num">Momentum</th><th className="num">Fire risk</th></tr>
             </thead>
             <tbody>
-              {recommend.zones.map((z) => (
+              {rec.zones.map((z) => (
                 <tr key={z.rank} className={p && z.place === p.name ? "sel" : ""} onClick={() => onZone(z.lon, z.lat)}>
                   <td><span className="rec-rank">{z.rank}</span></td>
                   <td>{z.label}

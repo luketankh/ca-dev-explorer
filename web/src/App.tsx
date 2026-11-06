@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   addProtocol, setWorkerUrl, LngLatBounds, Map as MlMap, NavigationControl, Popup, ScaleControl,
   type MapGeoJSONFeature,
@@ -8,9 +8,9 @@ import "maplibre-gl/dist/maplibre-gl.css";
 // Bundle MapLibre's module worker (and its shared chunk) so it works in dev and production builds
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 
-import { BASEMAP_STYLE, COLORS, DATA, DEFAULT_PLACE, INITIAL_VIEW, NAIP_YEARS, YEAR_MAX, YEAR_MIN } from "./config";
+import { BASEMAP_STYLE, COLORS, DATA, DEFAULT_PLACE, INITIAL_VIEW, YEAR_MAX, YEAR_MIN } from "./config";
 import {
-  addDataLayers, applyYear, COUNTY_METRICS, setCountyMetric, setNaip, setVisibility,
+  addDataLayers, applyYear, COUNTY_METRICS, recYearFor, setCountyMetric, setNaip, setVisibility,
   type CountyMetric, type ExtraData, type FireWindow, type LayerKey, type Visibility,
 } from "./layers";
 import Report from "./components/Report";
@@ -27,7 +27,7 @@ const LAYER_LABELS: [LayerKey, string, string][] = [
   ["naip", "Aerial imagery (NAIP)", "USDA NAIP via Planetary Computer, zoom in to view"],
   ["buildings", "Buildings by type & year built", "Overture Maps + County Assessor + Microsoft 2020"],
   ["arrows", "Growth direction arrows", "Where homes built in the last 5 years went, vs existing homes"],
-  ["recommend", "Where to build next (2026+)", "Growth momentum × flat open land × next to town × fire risk"],
+  ["recommend", "Where to build next (predicted each year)", "Growth momentum × flat open land × next to town × fire risk"],
   ["terrain", "Terrain (shaded relief)", "Elevation tiles: USGS 3DEP via AWS Terrain Tiles"],
   ["steep", "Steep ground", "Slope from USGS 3DEP 30 m: hillside 15–25%, too steep >25%"],
   ["fires", "Fire perimeters", "CAL FIRE FRAP (all years) + NIFC WFIGS (current season)"],
@@ -134,9 +134,7 @@ function firePopup(f: MapGeoJSONFeature) {
 
 export default function App() {
   const mapDiv = useRef<HTMLDivElement>(null);
-  const cmpDiv = useRef<HTMLDivElement>(null);
   const map = useRef<MlMap | null>(null);
-  const cmpMap = useRef<MlMap | null>(null);
   const [ready, setReady] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [placesFc, setPlacesFc] = useState<GeoJSON.FeatureCollection | null>(null);
@@ -154,11 +152,7 @@ export default function App() {
   const [naipShown, setNaipShown] = useState<number | null>(null);
   const [naipError, setNaipError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [compare, setCompare] = useState(false);
-  const [compareYear, setCompareYear] = useState(2012);
-  const [swipe, setSwipe] = useState(0.5);
   const [zoom, setZoom] = useState(INITIAL_VIEW.zoom);
-  const [cmpReady, setCmpReady] = useState(false);
 
   const places: PlaceMetrics[] = (placesFc?.features ?? []).map((f: GeoJSON.Feature) => f.properties as PlaceMetrics);
 
@@ -166,16 +160,18 @@ export default function App() {
   useEffect(() => {
     const get = (u: string) => fetch(u).then((r) => r.json());
     Promise.all([get(DATA.stats), get(DATA.places), get(DATA.counties), get(DATA.arrows), get(DATA.context),
-      get(DATA.recCells), get(DATA.recZones), get(DATA.recommend), get(DATA.steep)]).then(
-      ([s, p, c, a, ctx, rc, rz, rec, steep]) => {
+      get(DATA.recZones), get(DATA.recommend), get(DATA.steep)]).then(
+      ([s, p, c, a, ctx, rz, rec, steep]) => {
         setStats(s);
+        // rank labels for every year's zones (the map filters them to the slider year)
         const recLabels: GeoJSON.FeatureCollection = {
           type: "FeatureCollection",
-          features: (rec as Recommend).zones.map((z) => ({
-            type: "Feature", properties: { rank: z.rank }, geometry: { type: "Point", coordinates: [z.lon, z.lat] },
-          })),
+          features: Object.entries((rec as Recommend).by_year).flatMap(([yr, v]) => v.zones.map((z) => ({
+            type: "Feature" as const, properties: { rank: z.rank, year: Number(yr) },
+            geometry: { type: "Point" as const, coordinates: [z.lon, z.lat] },
+          }))),
         };
-        setExtra({ counties: c, arrows: a, recCells: rc, recZones: rz, recLabels, steep });
+        setExtra({ counties: c, arrows: a, recZones: rz, recLabels, steep });
         setRecommend(rec);
         fireExponent = (rec as Recommend).fire_exponent ?? fireExponent;
         setContext(ctx);
@@ -194,7 +190,7 @@ export default function App() {
     map.current = m;
     if (import.meta.env.DEV) (window as unknown as { __map: MlMap }).__map = m; // debugging handle
     m.addControl(new NavigationControl({ showCompass: false }), "top-right");
-    m.addControl(new ScaleControl({ unit: "imperial" }), "bottom-right");
+    m.addControl(new ScaleControl({ unit: "imperial" }), "top-left");
     m.on("load", () => {
       addDataLayers(m, placesFc, true, extra);
       setReady(true);
@@ -219,7 +215,8 @@ export default function App() {
         const zone = m.getSource("rec-zones")
           ? m.querySourceFeatures("rec-zones").find((z) => {
             const g = z.geometry as GeoJSON.Polygon;
-            return g && pointInRing([e.lngLat.lng, e.lngLat.lat], g.coordinates?.[0] ?? []);
+            return z.properties?.year === recYearFor(yearRef.current) && g
+              && pointInRing([e.lngLat.lng, e.lngLat.lat], g.coordinates?.[0] ?? []);
           })
           : undefined;
         popup.setLngLat(e.lngLat).setHTML(recPopup(recCell, zone)).addTo(m);
@@ -238,6 +235,8 @@ export default function App() {
     };
   }, [placesFc, extra]);
 
+  const yearRef = useRef(year);
+  yearRef.current = year;
   const contextRef = useRef<Context | null>(null);
   contextRef.current = context;
 
@@ -269,13 +268,13 @@ export default function App() {
   // NAIP imagery follows the slider year
   useEffect(() => {
     if (!ready || !map.current) return;
-    setNaip(map.current, year, vis.naip || compare)
+    setNaip(map.current, year, vis.naip)
       .then((v) => {
-        setNaipShown(vis.naip || compare ? v : null);
+        setNaipShown(vis.naip ? v : null);
         setNaipError(null);
       })
       .catch((e) => setNaipError(String(e.message ?? e)));
-  }, [ready, year, vis.naip, compare]);
+  }, [ready, year, vis.naip]);
 
   // selected place: highlight + zoom
   const prevSel = useRef<string | null>(null);
@@ -308,56 +307,6 @@ export default function App() {
     return () => clearInterval(t);
   }, [playing]);
 
-  // compare (swipe) map
-  useEffect(() => {
-    const m = map.current;
-    if (!compare || !ready || !m || !cmpDiv.current || !placesFc) return;
-    const c = new MlMap({
-      container: cmpDiv.current, style: BASEMAP_STYLE, center: m.getCenter(), zoom: m.getZoom(),
-      interactive: false, attributionControl: false,
-    });
-    cmpMap.current = c;
-    const sync = () => c.jumpTo({ center: m.getCenter(), zoom: m.getZoom(), bearing: m.getBearing(), pitch: m.getPitch() });
-    m.on("move", sync);
-    c.on("load", () => {
-      addDataLayers(c, placesFc, false);
-      c.setLayoutProperty("firms-heat", "visibility", "none");
-      c.setLayoutProperty("fhsz-fill", "visibility", "none");
-      c.setLayoutProperty("fires-fill", "visibility", "none");
-      c.setLayoutProperty("fires-line", "visibility", "none");
-      setCmpReady(true);
-    });
-    if (m.getZoom() < 13.5) m.easeTo({ zoom: 14.5 });
-    return () => {
-      m.off("move", sync);
-      c.remove();
-      cmpMap.current = null;
-      setCmpReady(false);
-    };
-  }, [compare, ready, placesFc]);
-
-  useEffect(() => {
-    const c = cmpMap.current;
-    if (!compare || !cmpReady || !c) return;
-    applyYear(c, compareYear, fireWindow);
-    setNaip(c, compareYear, true).catch(() => undefined);
-  }, [compare, cmpReady, compareYear, fireWindow]);
-
-  const onSwipeDrag = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const el = e.currentTarget.parentElement!;
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    const move = (ev: PointerEvent) => {
-      const r = el.getBoundingClientRect();
-      setSwipe(Math.min(0.98, Math.max(0.02, (ev.clientX - r.left) / r.width)));
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  }, []);
-
   const toggle = (k: LayerKey) => setVis((v) => ({ ...v, [k]: !v[k] }));
 
   return (
@@ -372,7 +321,7 @@ export default function App() {
           <h3>Layers</h3>
           {LAYER_LABELS.map(([k, label, src]) => (
             <label key={k} className="layer">
-              <input type="checkbox" checked={vis[k] || (k === "naip" && compare)} disabled={k === "naip" && compare}
+              <input type="checkbox" checked={vis[k]}
                 onChange={() => toggle(k)} />
               <span>
                 {label}
@@ -380,7 +329,7 @@ export default function App() {
               </span>
             </label>
           ))}
-          {(vis.naip || compare) && (
+          {vis.naip && (
             <div className="note">
               {naipError ? `Imagery unavailable: ${naipError}` :
                 zoom < 11 ? "Zoom in to see aerial imagery." :
@@ -430,20 +379,6 @@ export default function App() {
           </section>
         )}
 
-        <section>
-          <h3>Before / after</h3>
-          <label className="layer">
-            <input type="checkbox" checked={compare} onChange={() => setCompare((c) => !c)} />
-            <span>Swipe compare<small>Left: compare year · Right: slider year</small></span>
-          </label>
-          {compare && (
-            <div className="seg">
-              {NAIP_YEARS.map((y) => (
-                <button key={y} className={compareYear === y ? "on" : ""} onClick={() => setCompareYear(y)}>{y}</button>
-              ))}
-            </div>
-          )}
-        </section>
 
         <section className="legend">
           <h3>Legend</h3>
@@ -490,16 +425,6 @@ export default function App() {
 
       <main className="mapwrap">
         <div ref={mapDiv} className="map" />
-        {compare && (
-          <>
-            <div ref={cmpDiv} className="map cmp" style={{ clipPath: `inset(0 ${(1 - swipe) * 100}% 0 0)` }} />
-            <div className="swipe" style={{ left: `${swipe * 100}%` }}>
-              <div className="swipe-handle" onPointerDown={onSwipeDrag}>⇔</div>
-            </div>
-            <div className="cmp-tag left">{compareYear}</div>
-            <div className="cmp-tag right">{year}</div>
-          </>
-        )}
         {zoom < 12 && vis.buildings && <div className="hint">Zoom in to see individual buildings</div>}
 
         <div className="timebar">

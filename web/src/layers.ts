@@ -87,11 +87,10 @@ export function fireFilter(year: number, w: FireWindow): FilterSpecification {
   return ["all", [">=", ["get", "year"], fireStart(year, w)], ["<=", ["get", "year"], year]] as FilterSpecification;
 }
 
-/** Add every data source/layer. `withPlaces` is false for the compare (swipe) map. */
+/** Add every data source/layer. `withPlaces: false` skips the places layers (for secondary maps). */
 export interface ExtraData {
   counties: GeoJSON.FeatureCollection;
   arrows: GeoJSON.FeatureCollection;
-  recCells: GeoJSON.FeatureCollection;
   recZones: GeoJSON.FeatureCollection;
   recLabels: GeoJSON.FeatureCollection;
   steep: GeoJSON.FeatureCollection;
@@ -100,6 +99,15 @@ export interface ExtraData {
 export function countyFill(metric: CountyMetric): ExpressionSpecification {
   return ["case", ["==", ["get", metric], null], "#f0efec",
     ["interpolate", ["linear"], ["get", metric], ...rampStops(COUNTY_METRICS[metric].stops)]] as ExpressionSpecification;
+}
+
+/** Predictions exist for REC_FIRST..REC_LAST; slider years outside that use the nearest one. */
+export const REC_FIRST = 2000;
+export const REC_LAST = 2025;
+export const recYearFor = (year: number) => Math.min(REC_LAST, Math.max(REC_FIRST, year));
+
+function recFilter(year: number): FilterSpecification {
+  return ["==", ["get", "year"], recYearFor(year)] as FilterSpecification;
 }
 
 function arrowFilter(level: "major" | "minor", year: number, kind: "arrow" | "infill"): FilterSpecification {
@@ -244,10 +252,11 @@ export function addDataLayers(map: MlMap, places: GeoJSON.FeatureCollection, wit
 
   if (extra) {
     // "Where to build next": suitability cells (aqua ramp) + ranked zone outlines + rank labels.
+    // One prediction per year (made with data up to that year); filtered to the slider year.
     // Drawn under the buildings so existing development stays visible.
-    map.addSource("rec-cells", { type: "geojson", data: extra.recCells });
+    map.addSource("rec-cells", { type: "vector", url: DATA.recCells, minzoom: 8, maxzoom: 13 });
     map.addLayer({
-      id: "rec-cells", type: "fill", source: "rec-cells",
+      id: "rec-cells", type: "fill", source: "rec-cells", "source-layer": "rec", filter: recFilter(REC_LAST),
       paint: {
         "fill-color": ["interpolate", ["linear"], ["get", "score"], ...rampStops(COLORS.suitRamp)],
         "fill-opacity": ["interpolate", ["linear"], ["get", "score"], 5, 0.15, 30, 0.45, 80, 0.65],
@@ -255,12 +264,12 @@ export function addDataLayers(map: MlMap, places: GeoJSON.FeatureCollection, wit
     }, "buildings-fill");
     map.addSource("rec-zones", { type: "geojson", data: extra.recZones });
     map.addLayer({
-      id: "rec-zones-line", type: "line", source: "rec-zones",
+      id: "rec-zones-line", type: "line", source: "rec-zones", filter: recFilter(REC_LAST),
       paint: { "line-color": COLORS.suitDark, "line-width": 2, "line-dasharray": [3, 1.5] },
     });
     map.addSource("rec-labels", { type: "geojson", data: extra.recLabels });
     map.addLayer({
-      id: "rec-labels", type: "symbol", source: "rec-labels",
+      id: "rec-labels", type: "symbol", source: "rec-labels", filter: recFilter(REC_LAST),
       layout: {
         "text-field": ["to-string", ["get", "rank"]], "text-size": 13, "text-font": ["Noto Sans Bold"],
         "text-allow-overlap": true,
@@ -305,6 +314,9 @@ export function applyYear(map: MlMap, year: number, w: FireWindow, use: Building
   map.setFilter("buildings-fill", buildingFilter(year, use));
   map.setFilter("buildings-line", buildingFilter(year, use));
   map.setPaintProperty("buildings-fill", "fill-color", buildingColor(year));
+  for (const id of ["rec-cells", "rec-zones-line", "rec-labels"]) {
+    if (map.getLayer(id)) map.setFilter(id, recFilter(year));
+  }
   if (map.getLayer("arrows-major")) {
     for (const lvl of ["major", "minor"] as const) {
       map.setFilter(`arrows-${lvl}`, arrowFilter(lvl, year, "arrow"));

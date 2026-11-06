@@ -5,8 +5,9 @@ A map explorer for real-estate developers that shows **how an area developed ove
 
 - **Buildings by year built.** Every building is coloured by its construction year and appears on
   the map in the year it was built.
-- **Aerial imagery by year.** USDA NAIP imagery (2012–2022) follows the slider, with a before/after
-  swipe compare.
+- **Aerial imagery by year.** USDA NAIP imagery (2012–2022) follows the slider.
+- **Where to build next, predicted each year.** Zones just ahead of the growth arrows, re-predicted for every
+  slider year with only the data known then, plus what actually happened next.
 - **Wildfire history.** Historical fire perimeters plus a NASA FIRMS satellite fire-detection heatmap.
 - **Wildfire hazard.** CAL FIRE Fire Hazard Severity Zones.
 - **Area report.** For each city: residential growth, homes built per year, wildfire exposure,
@@ -20,7 +21,7 @@ The fire layers cover all of California.
 You need **Node.js 20+** (and `curl` + `unzip`, which macOS and most Linux systems already have).
 
 ```bash
-./fetch_data.sh   # downloads the pre-built map data (~85 MB) from the GitHub release "data-v4"
+./fetch_data.sh   # downloads the pre-built map data (~85 MB) from the GitHub release "data-v5"
 ./dev.sh          # installs packages on first run, then serves http://localhost:5173
 ```
 
@@ -33,7 +34,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
 After a rebuild, publish new data for everyone by zipping the folder's contents as `map-data.zip`
-and attaching it to a new release (e.g. `data-v5`). Others can then run `./fetch_data.sh data-v5`.
+and attaching it to a new release (e.g. `data-v6`). Others can then run `./fetch_data.sh data-v6`.
 
 `dev.sh` also uses a project-local Node in `.tools/node` if one exists (git-ignored).
 
@@ -145,6 +146,24 @@ factor was (1 − 0.8 × risk), briefly (1 − 0.4 × risk), then made progressi
 
 Cells scoring ≥ 30 that touch each other are merged into zones, ranked by total score (top 10 shown).
 
+**A prediction for every year.** (The earlier before/after swipe view was removed: it was buggy, and the
+year slider plus the growth arrows show change over time more directly.) The model runs once per year from 2000 to 2025, each time using only what
+was known that year: homes built, growth clusters and fires. The map and report show the prediction
+for the slider year (2026 shows the latest, 2025). For past years the report adds **"What happened next"**:
+the share of homes built in the following five years that landed inside that year's zones.
+
+| Predicted in | Homes built next 5 yrs | In that year's zones | Zone area (share of county) |
+|---|---|---|---|
+| 2000 | 29,784 (2001–05) | 54% | 5.4% |
+| 2005 | 11,121 (2006–10) | 34% | 5.2% |
+| 2010 | 5,427 (2011–15) | 55% | 4.9% |
+| 2015 | 11,397 (2016–20) | 43% | 3.1% |
+| 2020 | 7,415 (2021–25) | 37% | 4.6% |
+
+For complete five-year windows (predictions made 2000–2020), the zones cover 3–5% of the county and catch
+32–58% of the homes built over the next five years. Windows after 2020 are still open and assessor
+records lag, so the app labels those as early.
+
 **Backtest.** Re-running the model with only the data available at the time, the top 5% of the
 county it picked contained this share of the homes actually built in the following 5 years:
 
@@ -180,7 +199,8 @@ pipeline/            Python data pipeline (run in order, or ./run_pipeline.sh)
   10_tiles.py, tiler.py  Pure-Python vector tiler -> web/public/data/*.pmtiles
   11_insurance_crime.py  County insurance + crime (statewide), city crime rates -> counties.geojson, context.json
   12_growth_arrows.py    Growth-direction arrows per place and year -> growth_arrows.geojson
-  13_recommend.py        Where-to-build-next model + backtest -> recommend_{cells,zones}.geojson, recommend.json
+  13_recommend.py        Where-to-build-next model for every year 2000-2025 + backtest ->
+                         recommend_cells.pmtiles, recommend_zones.geojson, recommend.json
 web/                 React + MapLibre GL + PMTiles front end (Vite)
 data/                Raw and intermediate files (git-ignored)
 ```
@@ -196,7 +216,6 @@ data/                Raw and intermediate files (git-ignored)
 ## Known limitations / next steps
 
 - Single county. Statewide coverage needs parcel data for each county (or a paid provider).
-- The swipe-compare map duplicates the main map's data layers; fine for an MVP, heavy at scale.
 - Additional useful layers: FEMA flood zones, zoning/general plans, home prices (Zillow ZHVI),
   Census building permits, and VIIRS (375 m) fire detections alongside MODIS.
 - Building detection on each NAIP year would give "first seen" dates where assessor data is missing.
