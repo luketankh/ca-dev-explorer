@@ -30,7 +30,7 @@ context, and a ranked "where to build next" recommendation with a backtest.
 ## Commands
 
 ```bash
-./fetch_data.sh                       # download pre-built map data (needs `gh auth login`)
+./fetch_data.sh                       # download pre-built map data from the GitHub release
 ./dev.sh                              # dev server at http://localhost:5173
 cd web && npx tsc --noEmit            # type-check (run after every frontend change)
 cd web && npm run build               # production build (also checks the MapLibre worker bundles)

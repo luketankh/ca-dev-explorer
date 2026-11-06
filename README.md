@@ -17,7 +17,7 @@ The fire layers cover all of California.
 
 ## Run it
 
-You need **Node.js 20+**, plus the **GitHub CLI** (`gh auth login`) to fetch the map data.
+You need **Node.js 20+** (and `curl` + `unzip`, which macOS and most Linux systems already have).
 
 ```bash
 ./fetch_data.sh   # downloads the pre-built map data (~85 MB) from the GitHub release "data-v1"
