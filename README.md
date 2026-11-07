@@ -1,4 +1,4 @@
-# CA Development Explorer (MVP)
+# Project Marco Polo (MVP)
 
 A map explorer for real-estate developers that shows **how an area developed over time** and
 **how exposed it is to wildfire**. Think of it as an Overture-style map with a time slider:

@@ -317,7 +317,7 @@ export default function App() {
     <div className="app">
       <aside className="side">
         <div className="brand">
-          <h1>CA Development Explorer</h1>
+          <h1>Project Marco Polo</h1>
           <p>Where California is building, and how close it is to wildfire.</p>
         </div>
 

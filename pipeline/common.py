@@ -1,4 +1,4 @@
-"""Shared config and helpers for the CA Development Explorer pipeline."""
+"""Shared config and helpers for the Project Marco Polo pipeline."""
 from __future__ import annotations
 
 import json
