@@ -30,7 +30,7 @@ context, and a ranked "where to build next" recommendation with a backtest.
   `src/config.ts` (years, data URLs, colour ramps), `src/types.ts` (data shapes).
 - `data/` (git-ignored): raw downloads and intermediate files.
 - `web/public/data/` (git-ignored): what the app loads. Get it with `./fetch_data.sh`
-  (GitHub release `data-v5`) or rebuild with `./run_pipeline.sh`.
+  (GitHub release `data-v6`) or rebuild with `./run_pipeline.sh`.
 
 ## Commands
 

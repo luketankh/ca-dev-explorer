@@ -21,7 +21,7 @@ The fire layers cover all of California.
 You need **Node.js 20+** (and `curl` + `unzip`, which macOS and most Linux systems already have).
 
 ```bash
-./fetch_data.sh   # downloads the pre-built map data (~85 MB) from the GitHub release "data-v5"
+./fetch_data.sh   # downloads the pre-built map data (~95 MB) from the GitHub release "data-v6"
 ./dev.sh          # installs packages on first run, then serves http://localhost:5173
 ```
 
@@ -34,7 +34,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
 After a rebuild, publish new data for everyone by zipping the folder's contents as `map-data.zip`
-and attaching it to a new release (e.g. `data-v6`). Others can then run `./fetch_data.sh data-v6`.
+and attaching it to a new release (e.g. `data-v7`). Others can then run `./fetch_data.sh data-v7`.
 
 `dev.sh` also uses a project-local Node in `.tools/node` if one exists (git-ignored).
 
