@@ -4,10 +4,10 @@ Guidance for Claude Code (and humans) working in this repo. Read `README.md` for
 methodology and data sources. `docs/CHAT_HISTORY.md` is the original build conversation; use it to
 understand *why* a decision was made, but trust the code where they disagree.
 
-**Development is paused.** The final review (turn 27 of `docs/CHAT_HISTORY.md`) lists open, not-yet-approved
-recommendations, ranked. Highest priority: add flood risk (FEMA / 200-year floodplain), account for Williamson
-Act farmland, score growth on a fixed scale instead of a percentile, and stop the backtest from treating
-undated buildings as existing in every year.
+**Open review items.** The final review (turn 27 of `docs/CHAT_HISTORY.md`) lists ranked recommendations.
+Done since: Williamson Act farmland, growth on a fixed scale (plus a multiplicative opportunity score), and no
+backtest look-ahead from undated buildings. Still open, highest first: flood risk (FEMA / 200-year floodplain,
+deliberately deferred), then medium items 5–9 and low items 10–15.
 
 ## What this is
 
@@ -30,7 +30,7 @@ context, and a ranked "where to build next" recommendation with a backtest.
   `src/config.ts` (years, data URLs, colour ramps), `src/types.ts` (data shapes).
 - `data/` (git-ignored): raw downloads and intermediate files.
 - `web/public/data/` (git-ignored): what the app loads. Get it with `./fetch_data.sh`
-  (GitHub release `data-v5`) or rebuild with `./run_pipeline.sh`.
+  (GitHub release `data-v6`) or rebuild with `./run_pipeline.sh`.
 
 ## Commands
 
@@ -60,6 +60,9 @@ There is no test suite yet. Verify changes by type-checking, building, and openi
 - **Fire history accounts for frequency and recency** (`fire_history.py`): all fires on record (10+ acres), each
   weighted 0.5^(age/10). Parts: frequency, repeat burning, recent *big* fire (size-aware), plus age-weighted
   FIRMS detections. Backtests compute it as of the test year (no future fires).
+- **City scores are on fixed scales, not percentiles.** Growth: average yearly rate of the 10-yr growth, 5%/yr
+  = 100 (`GROWTH_FULL_RATE`). Opportunity = growth × (1 − risk/100); subtracting 0.5 × risk let fire swamp
+  the fixed-scale growth score.
 - **Wildfire risk is on a fixed 0–100 scale**, not percentiles. Percentiles made quiet valley towns
   look risky (the "Linden" bug). FIRMS detections only count inside FHSZ hazard zones, because
   outside them they are mostly agricultural burning.
@@ -71,9 +74,18 @@ There is no test suite yet. Verify changes by type-checking, building, and openi
 - **Recommendation** (`13_recommend.py`) runs **once per year 2000–2025**, each with only that year's data
   (`score(year)`, fire history `as_of` that year). The app filters cells, zones and labels by `year` and shows
   "what happened next" from `recommend.json` → `by_year`. 500 m cells, score = 100 × momentum × open land × flat share × next to
-  town × (1 − fire risk)^`FIRE_EXPONENT` (= 2, progressive; history: 1 − 0.8·risk, then 1 − 0.4·risk). The Delta Primary Zone and water are excluded. Backtest: the top 5%
-  of cells captured 40–56% of the next 5 years' homes (vs 25–35% for an edge-of-town rule). If you change
+  town × (1 − `CONTRACT_PENALTY` × farmland contract) × (1 − fire risk)^`FIRE_EXPONENT` (= 2, progressive; history:
+  1 − 0.8·risk, then 1 − 0.4·risk). The Delta Primary Zone and water are excluded. Backtest: the top 5%
+  of cells captured 44–62% of the next 5 years' homes (vs 32–44% for an edge-of-town rule). If you change
   the model, re-run the backtest and update the README table.
+- **Farmland contracts** (Williamson Act / Farmland Security Zone) come from the assessor parcels
+  (`WMACT_CATEGORY` 1/4 = in force, 3/5 = non-renewal). `CONTRACT_PENALTY = 0.8`. Signing year = first two digits
+  of the contract number (verified: starts 1965, FSZ bump ~1998; blank or future-looking numbers = always in force).
+  Non-renewal contracts ending within `WINDOW` years count as "ending" (no penalty). Today's records omit
+  contracts that already ended, so past years under-count contracts and the backtest can't show the penalty
+  being too harsh.
+- **Undated buildings** (no assessor year, in Microsoft's 2019–20 footprints) only exist from `UNDATED_FROM =
+  2020` in the model. Counting them in every year was look-ahead.
 - **Insurance** (HearthMap/NBER, CC BY 4.0, attribution required) is county-level only. **Crime**
   (CA DOJ) is per police agency; Sheriff-patrolled places (incl. Mountain House) share the Sheriff's rate.
   Railroad police are excluded. Neither is in the opportunity score yet.

@@ -17,6 +17,7 @@ SERIES_START, SERIES_END = 1980, 2026  # assessor already records some 2026 comp
 BURNED_FRACTION_MAX = 0.25  # 25% of the 10 km ring burned since 2000 -> full burn component
 WILD_DETECTIONS_MAX = 50    # wildland fire detections per 100 km2 of ring, 2001-2025 -> full component
 FIRE_SINCE = 2000
+GROWTH_FULL_RATE = 0.05  # 5% more homes per year (~63% in 10 years) -> growth score 100
 BUFFER_M = 10_000  # fire exposure ring around each place
 ALBERS = 3310
 
@@ -127,11 +128,15 @@ for _, p in places.iterrows():
     print(f"  {p['name']:<16} bldgs={s['buildings']:>7,} 10yr growth={s['growth_10yr_pct']}%")
 
 df = pd.DataFrame(rows)
-# Transparent scoring. Growth: percentile of 10-yr residential growth among places with >= 300
-# dated homes. Wildfire risk: blend of hazard-zone share, burned area nearby and fire detections.
+# Transparent scoring, both on fixed scales so scores don't depend on which other places are in the list.
+# Growth: 10-yr residential growth as an average yearly rate, full marks at GROWTH_FULL_RATE (a percentile
+# made 3.6% growth score 64 and squeezed 53% vs 68% to 5 points apart). Only places with >= 300 dated homes.
+# Wildfire risk: blend of hazard-zone share, fire history and fire detections.
 eligible = df["res_dated"] >= 300
+df["growth_rate_pct"] = (100 * ((1 + df["growth_10yr_pct"] / 100) ** 0.1 - 1)).round(2)
 df["growth_score"] = np.nan
-df.loc[eligible, "growth_score"] = (df.loc[eligible, "growth_10yr_pct"].rank(pct=True) * 100).round(0)
+df.loc[eligible, "growth_score"] = (100 * (df.loc[eligible, "growth_rate_pct"] / (100 * GROWTH_FULL_RATE))
+                                    .clip(0, 1)).round(0)
 
 
 def risk(d):
@@ -141,7 +146,9 @@ def risk(d):
 
 
 df["risk_score"] = risk(df)
-df["opportunity_score"] = (df["growth_score"] - 0.5 * df["risk_score"]).round(0)
+# Fire risk takes away that share of the growth score (multiplicative, like the zone model). Subtracting
+# 0.5 x risk let fire risk swamp the now fixed-scale growth score (Tracy tied 3%-growth towns).
+df["opportunity_score"] = (df["growth_score"] * (1 - df["risk_score"] / 100)).round(0)
 df["rank"] = df["opportunity_score"].rank(ascending=False, method="min").astype("Int64")
 
 print("County totals ...")
@@ -159,11 +166,15 @@ write_json({
     "method": {
         "fire_buffer_km": BUFFER_M / 1000, "fire_since": FIRE_SINCE,
         "growth": "Residential buildings with an assessor year built in 2016-2025, divided by "
-                  "residential buildings built up to 2015.",
+                  "residential buildings built up to 2015, then converted to an average yearly rate. Fixed "
+                  f"0-100 scale: {GROWTH_FULL_RATE:.0%} a year (about {(1 + GROWTH_FULL_RATE) ** 10 - 1:.0%} "
+                  "over 10 years) or more scores 100, half that scores 50. Only places with at least 300 "
+                  "dated homes are scored.",
         "risk": "Fixed 0-100 scale. " + FIRE_METHOD + " Hazard zone here = share of the place in High/Very High "
                 "zones; history and detections use a 10 km ring around the place. Satellite detections "
                 "outside hazard zones (mostly farm burning) are ignored.",
-        "opportunity": "growth score - 0.5 x wildfire risk score",
+        "opportunity": "growth score x (1 - wildfire risk score / 100): a place with risk 30 keeps 70% of its "
+                       "growth score",
     },
 }, WEB_DATA / "stats.json")
 cols = ["name", "res_dated", "growth_10yr_pct", "growth_score", "risk_score", "opportunity_score", "rank"]

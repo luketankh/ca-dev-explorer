@@ -88,6 +88,8 @@ export interface RecZone {
   slope_mean: number;
   flat_share: number;
   elev_m: number;
+  contract_share: number;
+  contract_ending_share: number;
   lon: number;
   lat: number;
 }
@@ -112,6 +114,8 @@ export interface Recommend {
   excluded: { delta_primary_zone_cells: number; water_cells: number; too_steep_cells: number };
   terrain: { slope_ok_pct: number; slope_max_pct: number; dem: string };
   fire_exponent: number;
+  contract_penalty: number;
+  undated_from: number;
   fire_half_life: number;
   fire_method: string;
 }
