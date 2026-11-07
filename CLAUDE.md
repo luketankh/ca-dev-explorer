@@ -4,6 +4,11 @@ Guidance for Claude Code (and humans) working in this repo. Read `README.md` for
 methodology and data sources. `docs/CHAT_HISTORY.md` is the original build conversation; use it to
 understand *why* a decision was made, but trust the code where they disagree.
 
+**Development is paused.** The final review (turn 27 of `docs/CHAT_HISTORY.md`) lists open, not-yet-approved
+recommendations, ranked. Highest priority: add flood risk (FEMA / 200-year floodplain), account for Williamson
+Act farmland, score growth on a fixed scale instead of a percentile, and stop the backtest from treating
+undated buildings as existing in every year.
+
 ## What this is
 
 A map explorer that helps residential developers decide where to build next in **San Joaquin

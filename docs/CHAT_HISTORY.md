@@ -24,6 +24,21 @@ The full conversation in which this project was designed and built with Claude C
 11. [Ship this to github for my friends to work. Thanks bro. Sorry for all this work.](#turn-11)
 12. [sreeharipa](#turn-12)
 13. [Remove satwikkotta, and add satwik-kotta.](#turn-13)
+14. [Make the repo public](#turn-14)
+15. [Not now](#turn-15)
+16. [Can we include geographical topography as well? It would not be feasible to build housing ](#turn-16)
+17. [Can we penalise fire risk by 60%? Right now, we only apply a scaling factor of (1-0.8). Ch](#turn-17)
+18. [Yes, push it](#turn-18)
+19. [Sorry - I want fire to count for more in the ranking. Penalize areas with higher fire risk](#turn-19)
+20. [Yes, push it](#turn-20)
+21. [In the formula of the fire, does it account for frequency and recency? Can you weigh the f](#turn-21)
+22. [Instead of it being a filter, can you color code the buildings by their type? Residential ](#turn-22)
+23. [Yes, push it](#turn-23)
+24. [We are going to make the prediction zone dynamic - at every year, based on the available d](#turn-24)
+25. [Also, remove the swipe compare. The feature is bugged and we think that the building growt](#turn-25)
+26. [Yes, push it](#turn-26)
+27. [Can you polish this product and make sure its working as intended. We are gonna stop devel](#turn-27)
+28. [At this moment, just push the changes to github. Include this whole chat as a history for ](#turn-28)
 
 ---
 
@@ -1458,3 +1473,1060 @@ Once they've accepted, the three commands from the README will get them running.
 </details>
 
 Swapped. Next, the chat export. I'll load the transcript export tool:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Unpack the exported transcript into scratchpad
+
+</details>
+
+The export holds a 2,246-line transcript. I'll check its structure so I can turn it into a readable document:
+
+<details><summary><i>Steps (3)</i></summary>
+
+- Inspect transcript record types
+- Wrote `transcript_to_md.py`
+- Convert transcript to Markdown and scan for secrets
+
+</details>
+
+The export has 13 turns (65 KB). Before sharing it, I'll double-check the two lines that mention "token":
+
+<details><summary><i>Steps (2)</i></summary>
+
+- Check token mentions and the personal remark
+- Remove the remark and preview one converted turn
+
+</details>
+
+The chat history reads well. Now CLAUDE.md: the project brief Claude Code reads automatically whenever one of your groupmates opens the repo.
+
+<details><summary><i>Steps (2)</i></summary>
+
+- Wrote `CLAUDE.md`
+- Link the new docs from the README
+
+</details>
+
+Committing and pushing:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Commit docs and push to GitHub
+
+</details>
+
+> **Status:** Satwik's invite now goes to satwik-kotta, and the wrong satwikkotta invite is cancelled. CLAUDE.md and docs/CHAT_HISTORY.md (13 turns) are pushed to main. Satwik still needs to accept his invite; Sreehari is already in.
+
+All done, bhai. Everything is pushed to https://github.com/luketankh/ca-dev-explorer.
+
+**Collaborators**
+- **satwikkotta:** invitation cancelled.
+- **satwik-kotta (Satwik):** invited with write access. He needs to accept it at https://github.com/luketankh/ca-dev-explorer/invitations.
+- **sreeharipa:** already accepted and has access.
+
+**[CLAUDE.md](CLAUDE.md)**
+Claude Code reads this automatically whenever one of your groupmates opens the repo, so it starts with the full context. It covers:
+- what the project is and where everything lives
+- the commands to fetch data, run, type-check, build and rebuild
+- the key decisions and why we made them: assessor years, residential-only scoring, the fixed-scale fire risk (the Linden fix), how the arrows and the recommendation model work, and why Microsoft's data can't give yearly dates
+- the problems we hit and how they were fixed: DuckDB 2.0, MapLibre's background worker, the "NonWildland" hazard class, the Census API key, and Overture deleting old releases
+- conventions for colors, new data sources and publishing new map data
+
+**[docs/CHAT_HISTORY.md](docs/CHAT_HISTORY.md)**
+This is our whole conversation as readable Markdown: 13 turns with a clickable table of contents.
+- Your messages appear as quoted sections, followed by my full replies and status notes.
+- Each turn's commands and file edits are folded into a short "Steps" list you can expand.
+- Raw command output, my hidden reasoning and system text are left out.
+- **Not fully complete:** it was exported partway through this last request, so it doesn't include the CLAUDE.md work or this summary.
+- **One edit:** as I mentioned, I removed an offhand personal remark about a groupmate from the shared copy.
+
+The README links to both files. The original full export, including screenshots, is a zip in your Downloads folder: `/Users/luke/Downloads/session-export-1794003483629.zip`. I didn't add it to the repo because it's 12 MB and includes system text.
+
+---
+
+<a id="turn-14"></a>
+## 14. You asked
+
+> Make the repo public
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Scan history and files for secrets or personal info
+
+</details>
+
+No secrets, keys or personal email anywhere in the code or history, and commits use your noreply address. Making it public:
+
+<details><summary><i>Steps (2)</i></summary>
+
+- Make repo public and confirm anonymous access
+- Set visibility to public via API and verify
+
+</details>
+
+The repo is public, and the map data now downloads without a GitHub login. Since `fetch_data.sh` no longer needs the GitHub CLI, I'll make it fall back to a plain download:
+
+<details><summary><i>Steps (3)</i></summary>
+
+- Wrote `fetch_data.sh`
+- Update docs and test the curl-based fetch
+- Commit and push the fetch script change
+
+</details>
+
+> **Status:** luketankh/ca-dev-explorer is now public, and the code, docs and map data download work without logging in. fetch_data.sh now uses curl, so no GitHub CLI is needed. The repo still has no LICENSE file.
+
+The repo is now public at https://github.com/luketankh/ca-dev-explorer. I checked it without logging in: the repo page loads and the map data downloads.
+
+**Before switching, I checked:**
+- **Commits** only show your GitHub "noreply" address, not your personal email.
+- **No secrets** (tokens, passwords, API keys) anywhere in the code or history.
+- **The chat history** has no personal details, and an offhand personal remark about a groupmate was removed.
+
+**What changed:**
+- **Anyone can see it now:** the code, `CLAUDE.md`, the chat history and the `data-v1` map data download.
+- **Simpler setup:** `fetch_data.sh` now downloads with `curl`, so nobody needs the GitHub CLI or a login. I tested it and pushed the change, so setup is now just clone, `./fetch_data.sh`, `./dev.sh`.
+- **Sreehari and Satwik keep write access.** Strangers can view and fork the repo, but can't push to it.
+
+**Now that it's public, licensing matters:**
+- **No LICENSE file yet.** Without one, others can legally view the code but not reuse it. An MIT licence for the code would fix that.
+- **The map data needs its own licence.** It's built from Overture and Microsoft building data, which are under ODbL. That licence requires the published map data to be released under ODbL too, with credit to the sources.
+- **The README already gives the required credits.** That includes HearthMap's CC BY 4.0 insurance data, which needs credit to HearthMap.
+
+---
+
+<a id="turn-15"></a>
+## 15. You asked
+
+> Not now
+
+I'll leave the repo without a licence for now. Nothing else is pending: the repo is public, Sreehari is in, and Satwik's invite to satwik-kotta is waiting for him to accept.
+
+If you add a licence later, put an MIT `LICENSE` file at the root for the code. Also add a line to the README and the `data-v1` release notes saying the map data is under ODbL.
+
+---
+
+<a id="turn-16"></a>
+## 16. You asked
+
+> Can we include geographical topography as well? It would not be feasible to build housing on a mountain.
+
+Agreed: terrain is a real constraint here. The county is mostly flat valley floor, but its southwest corner (Tracy Hills, Corral Hollow and the Altamont foothills) and the eastern edge near the Sierra foothills are hilly. I'll add USGS 3DEP elevation, a bare-earth model at about 30 m resolution, compute slope, and use it in the "where to build next" model.
+
+<details><summary><i>Steps (7)</i></summary>
+
+- Check USGS elevation tiles, install rasterio, test terrain tiles
+- Check CORS headers on terrain tiles
+- Wrote `pipeline/terrain.py`
+- Download DEM tiles and compute slope grid
+- Locate integration points in the model script
+- Edited `pipeline/13_recommend.py`
+- Find excluded-summary and final print lines
+
+</details>
+
+Adding the steep-terrain map layer: slope classes at 100 m resolution, converted to shapes and clipped to the county.
+
+<details><summary><i>Steps (5)</i></summary>
+
+- Edited `pipeline/13_recommend.py`
+- Re-run the model with terrain and build steep layer
+- Locate layer module edit points
+- Edited `web/src/layers.ts`
+- Edited `web/src/config.ts`
+
+</details>
+
+Now App.tsx and the report:
+
+<details><summary><i>Steps (5)</i></summary>
+
+- Locate App.tsx edit points
+- Wire terrain data, toggles, popup and legend into App
+- Edited `web/src/types.ts`
+- Locate report text to update
+- Update report text for terrain and type-check
+
+</details>
+
+The type check passes. Checking the southwest hills (Tracy Hills and Corral Hollow) in the browser:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Checked the app in the browser
+
+</details>
+
+The steep layer exists (249 shapes in view), but the fire perimeters and hazard zones cover it here. I'll hide the fire layers briefly to check the terrain view on its own:
+
+<details><summary><i>Steps (3)</i></summary>
+
+- Checked the app in the browser
+- Update requirements; locate docs lines to edit
+- Update README and CLAUDE.md; production build
+
+</details>
+
+> **Status:** Terrain is in: USGS 3DEP slope removes steep land from the model, and the map has shaded relief and a steep-ground layer. Checked in the browser; the production build passes. It's all local only: the public repo and data-v1 don't have it yet.
+
+Terrain is now part of the model and the map. I checked it in the browser and the production build passes.
+
+**Data:** USGS 3DEP elevation, a public-domain bare-earth model at about 30 m resolution. I compute slope on a 25 m grid:
+- **≤ 15% slope:** buildable for normal subdivisions.
+- **15–25%:** hillside. It's possible but grading is expensive, so it counts half.
+- **Over 25%:** generally not buildable for tract housing, so it doesn't count.
+
+**In the "where to build next" model:**
+- Open land now counts only its flat share.
+- Squares with less than 20% flat land are excluded. That removes 459 squares, mostly in the Corral Hollow and Altamont hills southwest of Tracy, plus the eastern foothills.
+- Each zone now shows its average slope and flat share. The cell popup shows slope, flat share and elevation.
+
+**On the map:**
+- **Terrain (shaded relief):** hills are shaded so you can see the ground.
+- **Steep ground:** light brown for hillside, dark brown for too steep.
+
+**What changed in the results:** very little, which is a good sign. All 10 zones were already on flat valley land (average slope 0.3–3%), because that's where San Joaquin is actually growing. Zone 4 (Tracy – SW side) lost 4 squares on the hillside edge and zone 5 (Mountain House – S side) lost 1. The backtest is unchanged (47–56%). The real gain is a safeguard: the model can no longer recommend a hillside just because growth is heading toward it.
+
+**Before you push:** the new code expects a new map-data file, `steep_terrain.geojson`. If I push the code without also publishing new data, your friends' copies will show an empty map. So pushing means doing all three: commit the code, publish a `data-v2` release, and point `fetch_data.sh` at it.
+
+---
+
+<a id="turn-17"></a>
+## 17. You asked
+
+> Can we penalise fire risk by 60%? Right now, we only apply a scaling factor of (1-0.8). Change it to (1-0.4).
+
+Making the change. One clarification first: switching from (1 − 0.8 × fire risk) to (1 − 0.4 × fire risk) makes the fire penalty weaker, not stronger. A cell at maximum fire risk will now keep 60% of its score instead of 20%. That matches your formula, so I'll go with it.
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Find every reference to the 0.8 fire penalty
+
+</details>
+
+I'll make the penalty a named setting (`FIRE_PENALTY = 0.4`) and save it in the model output, so the app text reads it from there and future changes only need one edit:
+
+<details><summary><i>Steps (4)</i></summary>
+
+- Make fire penalty a constant set to 0.4
+- Re-run model with the 0.4 fire penalty
+- Edited `pipeline/13_recommend.py`
+- Re-run with improved zone labels
+
+</details>
+
+The labels are clearer now: "Between Manteca and Lathrop", "Between Tracy and Mountain House". Next, the app text and docs, using the saved setting so they stay in sync:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Update app text, types and docs; type-check and build
+
+</details>
+
+Builds clean. A quick check in the app:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Checked the app in the browser
+
+</details>
+
+> **Status:** The fire penalty is now (1 − 0.4 × fire risk), so a cell at maximum risk keeps 60% of its score. The model, app text and docs are updated, checked in the browser, and the build passes. This and the terrain work are local only and not pushed to GitHub.
+
+I changed the fire penalty to **(1 − 0.4 × fire risk)**. A cell at maximum fire risk now keeps 60% of its score instead of 20%, so fire counts for less in the ranking.
+
+It's now one setting, `FIRE_PENALTY = 0.4` in `pipeline/13_recommend.py`. The app reads it from the model's output, so the formula in the popup and the "How this is calculated" panel update automatically. The README and CLAUDE.md note that it used to be 0.8.
+
+**Effect on the ranking:**
+
+| # | Zone | Fire risk | Change |
+|---|---|---|---|
+| 1 | Between Manteca and Lathrop | 0% | same |
+| 2 | **Between Tracy and Mountain House** | 17% | up, since more cells near the foothills pass |
+| 3 | **Tracy – SW side** (Tracy Hills) | 46% | up from #4, and grew from 59 to 78 cells |
+| 4 | 0.8 km N of Stockton city limits | 0% | down from #2 |
+| 5 | 1.0 km W of Lodi city limits | 0% | down from #3 |
+| 6–10 | Lathrop W, NE of Manteca, Stockton NW, Lathrop N, Between Manteca and Ripon | ~0% | the old Tracy NW zone joined #2 |
+
+- **Backtest:** basically unchanged, 48–56% against 25–35% for the edge-of-town rule. Historically, little building happened in fire-prone areas, so the penalty size barely affects the backtest. This setting is a judgment call rather than something the data can settle.
+- **Terrain still applies:** the larger Tracy zones still stop at the hills.
+- **Label fix:** zones that touch two cities are now named "Between A and B". Before, the land between Tracy and Mountain House was labelled "NW of Tracy".
+
+---
+
+<a id="turn-18"></a>
+## 18. You asked
+
+> Yes, push it
+
+<details><summary><i>Steps (3)</i></summary>
+
+- Show pending changes and data-v1 references
+- Point fetch script and docs at data-v2
+- Fix the example tag in the README
+
+</details>
+
+Committing:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Commit terrain and fire-penalty changes
+
+</details>
+
+Committed. I'll publish the data-v2 release before pushing the code, so `fetch_data.sh` works the moment the new code lands:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Zip current map data and publish release data-v2
+
+</details>
+
+Release data-v2 is live with 13 files, including the new terrain layer. Pushing the code, then testing on a fresh clone:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Push, then verify a fresh clone gets data-v2
+
+</details>
+
+> **Status:** Terrain and the 0.4 fire penalty are pushed to main, and data-v2 is published. I tested a fresh clone: fetch_data.sh installs data-v2 with the new terrain layer and the 0.4 penalty.
+
+Both changes are on GitHub at https://github.com/luketankh/ca-dev-explorer.
+
+- **Code:** one new commit, "Add terrain to the model; relax fire penalty to 0.4". It includes the new terrain module, the model, app and doc updates, and adds `rasterio` to the requirements.
+- **Data:** new release [data-v2](https://github.com/luketankh/ca-dev-explorer/releases/tag/data-v2), 13 files including the steep-ground layer. I published it before pushing the code, so the new code never pointed at missing data.
+- **`fetch_data.sh`:** now downloads data-v2 by default. `data-v1` is still available for the old version.
+- **Tested:** a fresh clone from GitHub plus `./fetch_data.sh` installed data-v2, with the terrain file and the 0.4 fire penalty.
+
+Sreehari and Satwik need to pull the latest code and run `./fetch_data.sh` again to get the new data. If they rebuild the data themselves with `./run_pipeline.sh` instead, the first run downloads about 230 MB of elevation tiles.
+
+---
+
+<a id="turn-19"></a>
+## 19. You asked
+
+> Sorry - I want fire to count for more in the ranking. Penalize areas with higher fire risk greater in the score.
+
+No problem. I'll make the fire penalty both stronger and progressive, so high-risk areas lose proportionally more than low-risk ones. I'll replace (1 − 0.4 × risk) with **(1 − risk)²**:
+
+| Fire risk | Score kept, current (1 − 0.4 × risk) | Original (1 − 0.8 × risk) | New (1 − risk)² |
+|---|---|---|---|
+| 10% | 96% | 92% | 81% |
+| 25% | 90% | 80% | 56% |
+| 50% | 80% | 60% | 25% |
+| 100% | 60% | 20% | 0% |
+
+The exponent will be a single setting, so you can make it harsher or softer later.
+
+<details><summary><i>Steps (3)</i></summary>
+
+- Find all fire-penalty references
+- Switch to squared fire factor and re-run the model
+- Update app, types and docs for squared penalty; build
+
+</details>
+
+No references to the old penalty remain, and the build passes. A quick check in the app:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Checked the app in the browser
+
+</details>
+
+> **Status:** Fire risk is now penalised progressively with (1 − risk)², and Tracy Hills (46% risk) dropped out of the top 10. The model, app and docs are updated, checked in the browser, and the build passes. It's local only; GitHub still has the 0.4 version.
+
+Fire risk now counts much more, and it's progressive: the higher the risk, the harsher the penalty. The new factor is **(1 − fire risk)²**:
+
+| Fire risk | Score kept, before (1 − 0.4 × risk) | Now (1 − risk)² |
+|---|---|---|
+| 10% | 96% | 81% |
+| 25% | 90% | 56% |
+| 50% | 80% | 25% |
+| 100% | 60% | 0% |
+
+**New top 10:**
+1. Between Manteca and Lathrop (0% fire risk)
+2. 0.8 km N of Stockton city limits (0%)
+3. 1.0 km W of Lodi city limits (0%)
+4. Between Mountain House and Tracy (13%), now only its lower-risk northern part
+5. Lathrop – W side (0%)
+6. 1.0 km NE of Manteca city limits (0%)
+7. Stockton – NW side (0%)
+8. Tracy – NW side (1%)
+9. Lathrop – N side (0%)
+10. Tracy – W side (20%)
+
+**Tracy – SW side (Tracy Hills, 46% fire risk) has dropped out completely.** It was #3.
+
+**Trade-off:** three of the four backtests are unchanged (50–56%), but the 2019 one drops from 48% to 42%. A lot of 2020–24 building went into fire-prone Tracy Hills, which the model now deliberately avoids. The ranking now shows where it's safer to build, not just where building will happen. The README explains this next to the backtest table.
+
+**To adjust later:** it's one setting, `FIRE_EXPONENT = 2` in `pipeline/13_recommend.py`. Raise it for harsher, lower it for gentler, and the app text updates automatically. This only changes the "Where to build next" model. The per-city opportunity ranking still uses its own fire weighting (growth score minus half the risk score).
+
+---
+
+<a id="turn-20"></a>
+## 20. You asked
+
+> Yes, push it
+
+<details><summary><i>Steps (3)</i></summary>
+
+- Bump data release references to v3
+- Commit the progressive fire penalty
+- Zip map data and publish release data-v3
+
+</details>
+
+GitHub returned a server error (HTTP 500) while uploading the zip. That's usually temporary. I'll check whether the release was created and retry the upload:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Check state of the data-v3 release
+
+</details>
+
+The release exists as an unpublished draft with no file attached. I'll re-zip, upload, then publish:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Upload the zip to data-v3 (with retries) and publish it
+
+</details>
+
+GitHub keeps returning server errors (500/502) on uploads and even on simple release edits, which suggests a problem on GitHub's side. Checking GitHub's status page:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Check GitHub status for incidents
+
+</details>
+
+GitHub reports no incident, so it's likely a temporary glitch. Trying once more:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Retry the upload once
+
+</details>
+
+That worked: the file is uploaded. Publishing the release and confirming the file downloads without a login:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Publish data-v3 and verify public download
+
+</details>
+
+data-v3 is published and downloads publicly. Pushing the code and testing a fresh clone:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Push and verify a fresh clone gets data-v3
+
+</details>
+
+> **Status:** The progressive fire penalty is pushed to main and data-v3 is published. A fresh clone plus fetch_data.sh installs data-v3, with the squared penalty and the new top zones.
+
+The progressive fire penalty is live on GitHub: https://github.com/luketankh/ca-dev-explorer.
+
+- **Code:** new commit "Make the fire penalty progressive: (1 - fire risk)^2" on `main`.
+- **Data:** release [data-v3](https://github.com/luketankh/ca-dev-explorer/releases/tag/data-v3). The first two upload attempts failed with GitHub server errors, though GitHub's status page showed no incident. The third attempt worked, and the file now downloads publicly without a login.
+- **`fetch_data.sh`:** now downloads data-v3 by default. Older versions are still available with `./fetch_data.sh data-v2` or `data-v1`.
+- **Tested:** a fresh clone plus `./fetch_data.sh` gives the new model (squared penalty), with zones 1–4: Between Manteca and Lathrop, north of Stockton, west of Lodi, and Between Mountain House and Tracy.
+
+Sreehari and Satwik need to pull and run `./fetch_data.sh` again to see the new rankings.
+
+---
+
+<a id="turn-21"></a>
+## 21. You asked
+
+> In the formula of the fire, does it account for frequency and recency? Can you weigh the fire risk based on how many times a fire occurred and when a fire last occurred as opposed to the number of years it happened since 2000? i.e taking both recency and frequency into account.
+
+Not really. The current fire risk has three parts:
+
+| Part | Weight | Frequency? | Recency? |
+|---|---|---|---|
+| Fire hazard zone (CAL FIRE) | 50% | n/a, it's the official forward-looking map | n/a |
+| Share of land within 5 km burned **since 2000** | 30% | **No.** Land that burned three times counts the same as land that burned once | **No.** A 2001 fire counts the same as a 2024 fire |
+| Satellite fire detections within 5 km | 20% | Partly. It counts detections, which favors big fires over many separate fires | **No** |
+
+There's also a subtle backtest problem. When the model is tested "as of 2010", it uses the full fire history, including fires from 2011–2025 that it shouldn't know about yet.
+
+I'll replace the "burned since 2000" part with a fire-history score built from **the full fire record**, where each fire counts less the older it is. It has three equal parts:
+1. **Frequency:** how many separate fires burned nearby.
+2. **Repeat burning:** how much of the surrounding land burned, where land that burns again counts again.
+3. **Time since the last fire:** a fire last year scores high, one 30 years ago scores low.
+
+I'll apply the same age weighting to the satellite detections. Both the "where to build next" model and the per-city risk scores will use it, and the backtest will only use fires known at the time.
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Check fire record years near the county
+
+</details>
+
+The fire perimeter history I'm using stops at **2023**, which matters for recency. I'll check whether NIFC's newer perimeter service covers 2024–2025:
+
+<details><summary><i>Steps (2)</i></summary>
+
+- Inspect NIFC WFIGS perimeters service coverage
+- Check California coverage and dates of WFIGS perimeters
+
+</details>
+
+NIFC's newer WFIGS service has California wildfire perimeters from 2018 up to this week. I'll add the 2024–2026 fires to the fire layer so "years since the last fire" is current:
+
+<details><summary><i>Steps (3)</i></summary>
+
+- Read `pipeline/05_fire_perimeters.py`
+- Edited `pipeline/05_fire_perimeters.py`
+- Rebuild fire perimeters with 2024-2026 fires
+
+</details>
+
+Something's off: the history has only 2 fires for 2022 and 1 for 2023, which is far too few. Checking the raw download by year:
+
+<details><summary><i>Steps (3)</i></summary>
+
+- Count raw and processed fires by year
+- Edited `pipeline/05_fire_perimeters.py`
+- Rebuild perimeters with WFIGS from 2020 and list recent nearby fires
+
+</details>
+
+Coverage per year now looks complete through 2026. Before I build on this, I'll check that the 2020 SCU Lightning Complex is present, since it should sit near the county:
+
+<details><summary><i>Steps (2)</i></summary>
+
+- Look for the 2020 SCU Lightning Complex
+- Web search: “CAL FIRE "California Fire Perimeters (all)" FeatureServer services1.arcgis.com 2024 FRAP firep24”
+
+</details>
+
+data.ca.gov lists the dataset. I'll check its download links through the catalog API:
+
+<details><summary><i>Steps (5)</i></summary>
+
+- List download resources for CAL FIRE perimeters
+- Inspect CAL FIRE public perimeters service
+- Wrote `pipeline/05_fire_perimeters.py`
+- Rebuild perimeters from CAL FIRE FRAP + WFIGS 2026
+- Wrote `pipeline/fire_history.py`
+
+</details>
+
+Now I'll plug it into the "where to build next" model. Fire risk becomes year-specific, so the backtest uses only fires known at the time. First, the current fire section:
+
+<details><summary><i>Steps (6)</i></summary>
+
+- Locate fire-risk code in the model
+- Read `pipeline/13_recommend.py`
+- Wire age-weighted fire history into the model and run it
+- Inspect fire-history parts at known locations
+- Edited `pipeline/fire_history.py`
+- Read `pipeline/09_stats.py`
+
+</details>
+
+Now the per-city risk scores in the stats script:
+
+<details><summary><i>Steps (7)</i></summary>
+
+- Read `pipeline/09_stats.py`
+- Use the fire-history module in per-city stats
+- Rerun city stats and review new risk inputs
+- Make last-fire part size-aware and rerun city stats
+- Re-run model; rebuild fire tiles in the background
+- Locate fire text in report and popup
+- Add fire-history breakdown to report and popup; type-check
+
+</details>
+
+The type check passes, and the fire tiles are rebuilt (23,599 perimeters, 10.4 MB). Now the README and CLAUDE.md: new fire source, the fire-history method, and the updated backtest numbers.
+
+<details><summary><i>Steps (3)</i></summary>
+
+- Locate fire-related doc lines
+- Read `README.md`
+- Update README and CLAUDE.md; production build
+
+</details>
+
+The build passes. Checking the new fire-history panel in the app, using Tracy:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Checked the app in the browser
+
+</details>
+
+The report panel and the map are both blank, so something crashed. Checking the console:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Checked the app in the browser
+
+</details>
+
+A JSON file contains `NaN`, which browsers can't parse, so the app fails to load. I'll find which file it is and make the JSON writer convert NaN to null everywhere:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Find NaN values in output data files
+
+</details>
+
+It's the `years_since_fire` field on 7 zones that have no fire on record: pandas turned "none" into NaN. I'll fix it in the shared JSON writer, so no output file can contain NaN again:
+
+<details><summary><i>Steps (2)</i></summary>
+
+- Edited `pipeline/common.py`
+- Regenerate outputs and validate every JSON file
+
+</details>
+
+All data files are now strict, valid JSON. Rechecking the app with Tracy's report:
+
+<details><summary><i>Steps (2)</i></summary>
+
+- Checked the app in the browser
+- Fix fire layer source label and rebuild
+
+</details>
+
+> **Status:** Fire risk now weighs how often fires happened and how recently, using all fires on record. I also fixed a gap where the 2020–2023 fires were missing. Checked in the app; the build passes. Not pushed: GitHub still has data-v3.
+
+Fire risk now accounts for both how often fires happened and how recently. While building it I also found and fixed a real data gap.
+
+## The data gap
+The fire history I had been using (NIFC's interagency history) is **nearly empty after 2019**: 12 fires for 2020 and 4 for 2021. The app was missing 2020–2023, including the 2020 **SCU Lightning Complex** (396,825 acres, reaching the hills southwest of Tracy) and the 2024 **Corral Fire** (14,167 acres, just south of Tracy). I switched to CAL FIRE's own fire database, the authoritative California record (complete through 2025, about 23,000 fires), plus NIFC's current-season perimeters for 2026.
+
+## How fire history works now
+It uses **every fire on record** (10+ acres), not just since 2000. Each fire's weight **halves every 10 years**: a fire last year counts about 1, a 2015 fire 0.5, a 2005 fire 0.25.
+
+| Part | What it measures |
+|---|---|
+| **Frequency** | How many separate fires burned nearby, weighted by age |
+| **Repeat burning** | How much land burned. Land that burned twice counts twice |
+| **Recent big fire** | How recently a *significant* fire happened (one that burned at least 1% of the area). Small roadside grass fires barely count |
+| **Satellite detections** | Wildland hot spots, weighted by age |
+
+**Fire risk** = 50% hazard zone + 30% fire history (average of the first three parts) + 20% satellite detections. It applies to both the city risk scores and the "where to build next" model. The backtest also no longer peeks ahead: a test as of 2013 only knows the fires that had happened by 2013.
+
+## What changed
+- **City wildfire risk:**
+  - Tracy (35): a large recent fire and repeat burning in the hills.
+  - Mountain House (22): frequent but small fires.
+  - Valley towns: near zero (Manteca 2, Ripon 3, Lathrop and Stockton 0).
+- **City ranking:** Lathrop #1, Manteca #2, Mountain House #3.
+- **Where to build next:** the Mountain House–Tracy zone dropped out because the recent Corral Fire raised nearby risk. Tracy – W side (28% risk) is the only zone left with meaningful fire risk, at #10.
+- **Backtest:** 40–56%, against 25–35% for the edge-of-town rule. It's slightly lower than before because the model now avoids areas where building happened despite fire risk.
+- **In the app:** each city report has a new fire-history panel (most recent fire, fires on record, and a bar per part). Clicking a cell on the map shows the same breakdown.
+- **Also fixed:** some output files contained a value browsers can't read (NaN), which blanked the app. The pipeline now writes it as empty instead.
+- **Tunable settings** are at the top of `pipeline/fire_history.py`: `HALF_LIFE` (10 years), how much each part needs for full marks, and the weights.
+
+Sources:
+- [California Fire Perimeters (all), data.ca.gov](https://lab.data.ca.gov/dataset/california-fire-perimeters-all)
+- [CAL FIRE fire perimeters (FRAP)](https://www.fire.ca.gov/what-we-do/fire-resource-assessment-program/fire-perimeters)
+- [California Fire Perimeters (all), data.gov](https://catalog.data.gov/dataset/california-fire-perimeters-all-5b4ee)
+
+---
+
+<a id="turn-22"></a>
+## 22. You asked
+
+> Instead of it being a filter, can you color code the buildings by their type? Residential would be blue, commercial and industrial would be some other color you can choose that looks aesthetically pleasing and easy to notice. lol mb bro
+
+Sure. I'll color buildings by type and keep the age shading inside each color, so newer buildings are still darker:
+
+- **Residential:** blue, as now.
+- **Commercial & industrial:** amber/gold. It stands out clearly against blue, including for colorblind viewers, and no other map layer uses it.
+- **Other** (agricultural, public, no parcel match): neutral grey.
+- **"Built this year":** this highlight is currently orange, which sits too close to amber, so I'll change it to red.
+
+First I'll run the palette through the colorblind-safety validator:
+
+<details><summary><i>Steps (2)</i></summary>
+
+- Validate the building type palette for colorblind safety
+- Validate blue, amber and red together
+
+</details>
+
+All three pass the colorblind checks, including every pair. Next I'll update the colors and the map styling:
+
+<details><summary><i>Steps (2)</i></summary>
+
+- Find building color references
+- Add type ramps and color buildings by type and age
+
+</details>
+
+Now I'll swap the sidebar filter for a type legend:
+
+<details><summary><i>Steps (5)</i></summary>
+
+- Find filter and legend code in App.tsx
+- Read `web/src/App.tsx`
+- Edited `web/src/App.tsx`
+- Remove filter state; add key styles; type-check
+- Fix the expression type cast and build
+
+</details>
+
+It builds. I'll check it on Tracy, where the warehouses sit next to housing:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Checked the app in the browser
+
+</details>
+
+Tracy's warehouse district now stands out in amber, with older warehouses lighter and newer ones darker. The new key sits in the sidebar. Zooming out to see amber and blue side by side:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Checked the app in the browser
+
+</details>
+
+> **Status:** Buildings are now colored by type: residential blue, commercial & industrial amber, other grey, darker meaning newer, with red for built this year. The filter is replaced by a color key, checked in the browser, and the build passes. This and the fire-history update are local only.
+
+Done, no worries bro. The filter is gone and buildings are now colored by type, with age still shown within each color:
+
+| Type | Color | Notes |
+|---|---|---|
+| **Residential** | Blue | Same as before |
+| **Commercial & industrial** | **Amber/gold** | Stands out clearly against blue on the light map |
+| **Other** (agricultural, public, no parcel match) | Neutral grey | Kept low-key so it doesn't compete |
+| **Built in the selected year** | **Red** | Was orange, which sat too close to amber |
+
+- **Age shading:** within each color, lighter means older and darker means newer. Buildings with no known year (built before 2020) use the lightest shade.
+- **Colorblind check:** I ran blue, amber and red through the color validator, and every pair passed, including the colorblind checks. Amber is light against the white basemap, so the sidebar key and building popups carry the labels.
+- **Where it shows:** the sidebar now has a "Building colors" key, with a ramp for each type, where the filter used to be. The same coloring applies in the before/after swipe view.
+
+In Tracy you can now see the amber warehouse belt along I-205 and 11th Street wrapping around the blue neighborhoods.
+
+These colors only change the app, not the map data. But last turn's fire-history update did change the data, so pushing both still needs a new data release (data-v4).
+
+---
+
+<a id="turn-23"></a>
+## 23. You asked
+
+> Yes, push it
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Bump data release references to v4
+
+</details>
+
+I'll also update the color conventions in CLAUDE.md, which still describe the old building colors:
+
+<details><summary><i>Steps (3)</i></summary>
+
+- Find color convention text in docs
+- Update color conventions in CLAUDE.md
+- Commit fire history and building colors
+
+</details>
+
+Committed. Next I'll publish data-v4. The upload hit GitHub server errors last time, so I'll retry automatically if it fails:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Validate JSON, publish data-v4 with upload retries
+
+</details>
+
+data-v4 is published and downloads publicly. The first upload attempt hit a brief "release not found" delay on GitHub's side, and the retry worked. Pushing the code and testing a fresh clone:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Push and verify a fresh clone gets data-v4
+
+</details>
+
+> **Status:** The fire-history update and the building colors are pushed to main, and data-v4 is published. A fresh clone plus fetch_data.sh installs data-v4 with the age-weighted fire history and the new building colors.
+
+Both updates are live on GitHub: https://github.com/luketankh/ca-dev-explorer.
+
+- **Code:** new commit "Fire history by frequency and recency; color buildings by type" on `main`. It includes the fire-history module, the switch to CAL FIRE fire data, the NaN fix, the building colors, and updated README and CLAUDE.md.
+- **Data:** release [data-v4](https://github.com/luketankh/ca-dev-explorer/releases/tag/data-v4), which `fetch_data.sh` now downloads by default. GitHub needed a second upload attempt again, but the file is up and downloads publicly.
+- **Tested:** a fresh clone plus `./fetch_data.sh` installs data-v4 with the 10-year half-life fire history, "Between Manteca and Lathrop" as zone #1, and the new building colors.
+
+Sreehari and Satwik need to pull and run `./fetch_data.sh` again to see these changes.
+
+---
+
+<a id="turn-24"></a>
+## 24. You asked
+
+> We are going to make the prediction zone dynamic - at every year, based on the available data, make a prediction on where is the "where to build next" zone. 
+>
+> Also, QOL - put this scale to the top left of the application.
+>
+> *[screenshot attached]*
+
+Two changes:
+1. **Year-by-year prediction:** I'll run the model once per slider year, each time using only data up to that year (homes built, growth clusters, and fires that had happened). Moving the slider will show that year's prediction. For past years, the app can then also show how much of the next five years' building actually landed in the predicted zones.
+2. **Scale bar** moves to the top-left.
+
+<details><summary><i>Steps (4)</i></summary>
+
+- Map the structure of the model script
+- Read `pipeline/13_recommend.py`
+- Restructure the model to predict every year and run it
+- Check new outputs; find frontend recommendation code
+
+</details>
+
+The zones file is 4 MB because merged squares keep every corner point. I'll simplify the zone outlines in the pipeline, then update the map layers:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Simplify zone outlines and re-run
+
+</details>
+
+The zones file is down from 4 MB to 550 KB. Updating the map layers:
+
+<details><summary><i>Steps (2)</i></summary>
+
+- Read `web/src/layers.ts`
+- Make recommendation layers year-filtered
+
+</details>
+
+Now App.tsx: data loading, year-specific labels, the popup's zone lookup, and the scale bar position.
+
+<details><summary><i>Steps (2)</i></summary>
+
+- Read `web/src/App.tsx`
+- Wire per-year labels, zone lookup and move scale bar
+
+</details>
+
+The compare view's left year tag also sits at the top-left, so I'll move it below the scale bar. Then the report:
+
+<details><summary><i>Steps (2)</i></summary>
+
+- Adjust overlays; view report recommendation header
+- Make the report follow the slider year; type-check
+
+</details>
+
+The type check passes. One label update: the layer name still says "(2026+)". Then I'll test in the browser by setting the slider to 2010:
+
+<details><summary><i>Steps (3)</i></summary>
+
+- Rename the recommendation layer label
+- Checked the app in the browser
+- Update docs for per-year predictions; build
+
+</details>
+
+> **Status:** The "where to build next" prediction now changes with the year slider, with one prediction per year from 2000 to 2025, each using only that year's data. The scale bar is at the top-left. Checked in the browser; the build passes. Not pushed yet.
+
+Both changes are in. I checked them in the browser and the production build passes.
+
+## Prediction for every year
+- **One prediction per year:** the model now runs for **every year from 2000 to 2025**, each time using only what was known that year: homes built, growth clusters and fires. Moving the slider updates the green cells, the numbered zones and the zone list. 2026 shows the latest prediction (2025) with a note.
+- **"What happened next":** for past years, the report shows how much of the following five years' building landed in that year's zones. For example, *predicted in 2010:* of the 5,427 homes built 2011–2015, **55%** landed in zones covering just **4.9%** of the county.
+- **Accuracy:** for every year with a complete five-year window (2000–2020), the zones cover 3–5% of the county and caught **32–58%** of the homes built over the next five years. After 2020 the windows aren't complete yet, so the app labels those as early.
+- **Speed:** all 26 years run in about 35 seconds. The cells are stored as map tiles (3 MB) and the zones file is 550 KB.
+
+Try playing the slider from 2000: you can watch the predicted zones move from north Stockton and Lodi in the early 2000s toward Lathrop, Manteca and Mountain House later.
+
+## Scale bar
+The scale bar is now at the **top-left**. I moved the compare view's left year tag down so the two don't overlap.
+
+## Also fixed
+A variable-name clash in the model (a loop reused `b`, the name holding all the buildings). It was harmless when the model ran once but would have broken the per-year loop.
+
+---
+
+<a id="turn-25"></a>
+## 25. You asked
+
+> Also, remove the swipe compare. The feature is bugged and we think that the building growth prediction should generally follow the arrows.
+
+I'll remove the swipe compare. On your second point: the predictions are already built from the arrows. The model and the arrows use the same clusters of new homes, and each cluster pushes its prediction about 1.5 km ahead of itself along its arrow's direction. I'll check that numerically after removing the feature.
+
+<details><summary><i>Steps (2)</i></summary>
+
+- Find all compare-related code in App.tsx
+- Read `web/src/App.tsx`
+
+</details>
+
+Removing the compare state, map, swipe handler, sidebar section and overlay:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Remove swipe compare code from App.tsx
+
+</details>
+
+Cleaning up the leftovers: unused imports, the swipe CSS, and a comment that still mentions the compare map:
+
+<details><summary><i>Steps (4)</i></summary>
+
+- Remove unused imports and compare CSS; build
+- Measure how well predicted zones follow the arrows
+- Find swipe-compare mentions in docs
+- Update docs for removed swipe compare
+
+</details>
+
+A last check in the browser:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Checked the app in the browser
+
+</details>
+
+> **Status:** Swipe compare is removed: the code, sidebar section, styles and doc mentions are all gone. Predictions do follow the arrows: every zone is within 4 km of one, and about 86% sit ahead of it. The build passes and the app is checked; this and the per-year predictions are not pushed yet.
+
+Swipe compare is gone. I removed the second map, the drag handle, the year tags, the "Before / after" sidebar section, its styles, and the README mentions. The aerial imagery (NAIP) layer is still there and follows the year slider. The app now runs a single map, which also makes it lighter.
+
+**Do the predictions follow the arrows?** Yes, by design. The model and the arrows use the same clusters of new homes, and each cluster pushes its prediction about 1.5 km ahead along its arrow's direction. I checked all 26 years:
+- **100%** of predicted zones are within 4 km of a growth arrow, in every year.
+- **86%** of the prediction score, averaged across years, sits ahead of an arrow (within 60° of its direction). Recent years are 96–100%.
+- **The few lower years** (2012, 2013, 2020, around 50%) are when nearby clusters point different ways, or when "infill" clusters, which have no direction, add to the score around themselves.
+
+I noted this in CLAUDE.md, so anyone changing the model later knows the predictions should stay tied to the arrows.
+
+---
+
+<a id="turn-26"></a>
+## 26. You asked
+
+> Yes, push it
+
+<details><summary><i>Steps (3)</i></summary>
+
+- Bump data release references to v5
+- Commit per-year predictions and compare removal
+- Validate JSON, publish data-v5 with upload retries
+
+</details>
+
+data-v5 is published (uploaded first try this time). Pushing and testing a fresh clone:
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Push and verify a fresh clone gets data-v5
+
+</details>
+
+> **Status:** Yearly predictions, the swipe-compare removal and the top-left scale bar are pushed to main, and data-v5 is published. A fresh clone plus fetch_data.sh installs data-v5 with predictions for 2000 to 2025.
+
+Pushed. Everything is live at https://github.com/luketankh/ca-dev-explorer.
+
+- **Code:** new commit "Predict where to build next for every year; remove swipe compare" on `main`. It includes the yearly predictions, the swipe-compare removal, the top-left scale bar, the variable-name fix, and updated README and CLAUDE.md.
+- **Data:** release [data-v5](https://github.com/luketankh/ca-dev-explorer/releases/tag/data-v5). It uploaded on the first try this time, and `fetch_data.sh` now downloads it by default.
+- **Tested:** a fresh clone plus `./fetch_data.sh` installs data-v5 with predictions for 2000–2025. For example, the 2010 prediction caught 55.4% of the 5,427 homes built 2011–2015. The swipe-compare code is fully gone.
+
+Sreehari and Satwik need to pull and run `./fetch_data.sh` again to see the year-by-year predictions.
+
+---
+
+<a id="turn-27"></a>
+## 27. You asked
+
+> Can you polish this product and make sure its working as intended. We are gonna stop development for now. Check the scoring criterions one last time, donot make any changes (unless I sign off) to the product, just give out recommendations for things that are badly implemented if any.
+
+I'll keep this to a review. I won't change the product; I'll test it end to end, re-examine the scoring logic and data, and give you a ranked list of recommendations to sign off on.
+
+<details><summary><i>Steps (3)</i></summary>
+
+- Checked the app in the browser
+- Used resize_window
+- Checked the app in the browser
+
+</details>
+
+At tablet width the map shrinks to a thin strip between the two side panels, and the timeline overlaps the attribution. The layout isn't responsive, so I'll note that too. Resetting the viewport:
+
+<details><summary><i>Steps (2)</i></summary>
+
+- Used resize_window
+- Pull the key scoring code for review
+
+</details>
+
+I've reviewed the scoring code. Now I'll run read-only data checks to measure the biases I suspect, so each recommendation has numbers behind it:
+
+<details><summary><i>Steps (5)</i></summary>
+
+- Check growth-score scaling, homes vs housing units, undated buildings
+- Check 2025 top zones against FEMA flood zones and Williamson Act
+- Rerun flood and Williamson Act checks with point sampling
+- Check backtest look-ahead and docs-vs-data consistency
+- Scan for maintainability risks (read-only)
+
+</details>
+
+> **Status:** Review done, nothing changed. The app works end to end: every layer, control, popup and the yearly predictions behave correctly with no errors. Four scoring weaknesses matter most: no flood risk, Williamson Act farmland ignored, a relative growth score, and backtest look-ahead.
+
+I didn't change anything; this is review only. The app works as intended, but the scoring has four weaknesses worth fixing before anyone relies on the rankings.
+
+## What's working
+- **App:** loads in about 1.5 seconds with no errors. All 11 layers, the slider (2000–2026), play, aerial imagery, county metrics, the fire-history window, the chart toggle, all 22 city reports, and all five popup types work.
+- **Yearly predictions:** they follow the slider, and 2026 correctly falls back to 2025.
+- **Docs:** the README and CLAUDE.md numbers match the current data.
+- **GitHub:** the repo, `fetch_data.sh` and data-v5 work from a fresh clone.
+
+## High priority: these affect the rankings themselves
+1. **Flood risk is missing.** 30–35% of the land in zone **#1 (Between Manteca and Lathrop)**, #4 (Lathrop W) and #8 (Tracy NW) is in FEMA's 100-year flood zone. Lathrop, Manteca and Stockton also fall under California's 200-year flood protection rules (SB 5). *Fix:* add FEMA flood zones (plus DWR's 200-year floodplain) as an exclusion or penalty.
+2. **Protected farmland is ignored.** Every top zone overlaps land under Williamson Act contracts, which restrict development for 9–10 years (zone #1: about 2,400 acres, an upper bound). The county parcel data already includes contract status, but the pipeline doesn't download that field. *Fix:* penalize land under contract, and treat contracts that are ending as a positive signal.
+3. **The growth score is relative, the same kind of problem as the old Linden risk score.** It ranks places against each other, so Stockton's 3.6% growth scores 64/100, while Lathrop (53%) and Mountain House (68%) end up only 5 points apart. Opportunity then subtracts an absolute risk score from this relative growth score, so Tracy (12% growth, risk 35) ties Dogtown (5%, risk 11). *Fix:* score growth on a fixed scale, as I did for fire risk.
+4. **The backtest partly sees the future.** Buildings with no recorded year are treated as standing in every year. That makes about 200 cells (15–18% of the cells counted as built-up) look built-up in 2000 and 2010 when some were built later. The hazard-zone map (2024) and the terrain data are also current data used for past years. *Fix:* only count buildings with no recorded year from 2020, and note the remaining limitation.
+
+## Medium priority
+5. **"Homes" are really residential buildings.** There are 0.78–0.99 buildings per housing unit, so apartment and duplex growth is undercounted by about 20% in Stockton, Lodi and Lathrop. Garages also count. *Fix:* relabel as "residential buildings", or use housing-unit counts.
+6. **Fire hazard is measured two ways.** The city score counts only High and Very High hazard zones; the zone model also counts Moderate. *Fix:* use one definition.
+7. **Prediction scores are relative within each year.** The map always shows 10 zones with a top score of 100, even in the 2009 slump when about 4,500 homes were built in five years, against about 30,000 in 2001. *Fix:* also show expected building volume for the year.
+8. **Recent years are undercounted.** The 10-year growth window (2016–2025) includes 2024–25, which assessor records haven't fully caught up on. *Fix:* use 2015–2024 or flag it.
+9. **The fire heatmap includes farm burning,** although the scores exclude it. That makes the valley look more fire-prone on the map than in the scores. *Fix:* show only wildland detections, or add a toggle.
+
+## Low priority: polish and upkeep
+10. **Not usable on tablets.** At tablet width the map shrinks to a thin strip, and the timeline overlaps the map credits.
+11. **Outdated arrow popup text:** it says "length is clamped", which no longer applies.
+12. **Years are hard-coded** (2025/2026) in about 15 places, so next year's data refresh will need edits across files. *Fix:* keep them in one settings file.
+13. **The pinned Overture release** (`2026-10-21.0`) will be deleted within about 3 months, since Overture only keeps around three releases online. Rebuilding the data will fail after that. *Fix:* pick up the latest release automatically.
+14. **Downloaded data never refreshes.** Re-running the pipeline reuses old downloads, so current-season fires won't update. *Fix:* add a refresh option.
+15. **Other:**
+    - no automated tests
+    - no licence file (you declined earlier)
+    - a single 1.35 MB app file that slows the first load
+    - `docs/CHAT_HISTORY.md` stops at turn 13
+
+My recommendation is to fix 1–4 first, because they can change which zones rank on top, starting with flood risk and protected farmland. Items 5–9 are quick clarity wins. Items 10–15 can wait until development resumes.
+
+Sources:
+- [FEMA National Flood Hazard Layer](https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer)
+- [San Joaquin County parcels (Williamson Act fields)](https://services2.arcgis.com/GQhSReJEO6f7tsvy/ArcGIS/rest/services/Parcels/FeatureServer)
+
+---
+
+<a id="turn-28"></a>
+## 28. You asked
+
+> At this moment, just push the changes to github. Include this whole chat as a history for the next user.
+
+Nothing in the product has changed since the last push. I'll check that, then regenerate the chat history so it covers the whole conversation, and push it.
+
+<details><summary><i>Steps (1)</i></summary>
+
+- Check git status and that the converter script exists
+
+</details>
