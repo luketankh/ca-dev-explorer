@@ -46,6 +46,8 @@ YEAR = 2025
 BACKTEST_YEARS = [2010, 2013, 2016, 2019]
 WINDOW = 5
 FIRE_EXPONENT = 2  # fire factor = (1 - fire risk) ** FIRE_EXPONENT; higher = harsher
+UNDATED_FROM = 2020  # first year undated buildings are known to exist (Microsoft 2019-20 footprints)
+CONTRACT_PENALTY = 0.8  # farmland factor = 1 - CONTRACT_PENALTY x share of the cell under contract
 AHEAD_M, SIGMA_M = 1500, 1200
 COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 DELTA_URL = "https://gis.water.ca.gov/arcgis/rest/services/Boundaries/i03_Delta_PrimarySecondary_Zones/FeatureServer/0"
@@ -123,6 +125,39 @@ print(f"  {int(cells['too_steep'].sum()):,} cells too steep (<20% of land under 
 
 excluded = cells["in_primary_zone"] | (cells["water_frac"] > 0.4) | cells["too_steep"]
 
+# --- Williamson Act / Farmland Security Zone contracts (county assessor parcels) ------------------
+# Contracted farmland can't be developed while the contract runs (9-10 years after a notice of
+# non-renewal; 19-20 for Farmland Security Zones). For year Y a contract counts from the year it was
+# signed (first two digits of the contract number). A contract in non-renewal that ends within the next
+# WINDOW years counts as "ending": not penalised, and reported, because the owner is signalling an exit.
+# Limitation: contracts that ended before today's parcel snapshot are not in the data, so past years
+# miss some contracts that were in force then.
+print("Farmland contracts ...")
+wa = gpd.read_parquet(RAW / "sj_parcels.parquet")
+wa = wa[wa["WMACT_CATEGORY"].notna() & wa.geometry.notna()].to_crs(ALBERS)
+yy = pd.to_numeric(wa["WILLYACT_CONTRACT"].astype("string").str[:2], errors="coerce").astype(float)
+wa["signed"] = np.where(yy >= 60, 1900 + yy, 2000 + yy)
+# no usable contract number (blank, or a prefix that reads as a future year): assume it has always been there
+wa["signed"] = wa["signed"].where(wa["signed"] <= YEAR + 1).fillna(1900)
+wa["notice"] = pd.to_numeric(wa["WILLYACT_RENEWAL"], errors="coerce").astype(float).replace(0, np.nan)
+wa["ends"] = pd.to_numeric(wa["MPTS_CONTRACTEXPIREDATE"], errors="coerce").astype(float).replace(0, np.nan)
+wa["geometry"] = wa.geometry.make_valid()
+wap = gpd.overlay(cells[["geometry"]].reset_index(), wa[["signed", "notice", "ends", "geometry"]],
+                  how="intersection", keep_geom_type=True)
+wap["a"] = wap.geometry.area / area
+print(f"  {len(wa):,} contracted parcels, {wa.geometry.area.sum() / 4046.86:,.0f} acres; "
+      f"{int((wap.groupby('index')['a'].sum() > 0.5).sum()):,} cells over half contracted")
+
+
+def farm_contracts(year):
+    """Share of each cell under a contract in force in `year`, and the share whose contract is ending."""
+    live = wap[wap["signed"] <= year]
+    ending = live["notice"].le(year) & live["ends"].le(year + WINDOW)
+    held = live.loc[~ending].groupby("index")["a"].sum().reindex(cells.index).fillna(0).clip(0, 1)
+    end = live.loc[ending].groupby("index")["a"].sum().reindex(cells.index).fillna(0).clip(0, 1)
+    return held.values, end.values
+
+
 # --- buildings ----------------------------------------------------------------------------------
 b = gpd.read_parquet(PROCESSED / "buildings.parquet").to_crs(ALBERS)
 bpt = b.representative_point()
@@ -133,9 +168,14 @@ res_mask = (b["ys"] == "assessor") & (b["category"] == "Residential")
 
 
 def existed_by(year):
-    """Buildings standing at the end of `year` (undated pre-2020 buildings count from the start)."""
+    """Buildings known to be standing at the end of `year`.
+
+    Undated buildings ("unknown": no assessor year, but in Microsoft's 2019-20 footprints) only count from
+    UNDATED_FROM. Counting them in every year let past predictions see buildings that may not have existed
+    yet (look-ahead). Leaving them out of earlier years makes some cells look a little emptier than they were.
+    """
     dated = (b["ys"] == "assessor") & (b["y"] <= year)
-    undated_old = b["ys"] == "unknown"
+    undated_old = (b["ys"] == "unknown") & (year >= UNDATED_FROM)
     new = (b["ys"] == "new") & (year >= 2021)
     return dated | undated_old | new
 
@@ -190,10 +230,14 @@ def score(year):
     mom = np.clip(mom / np.percentile(mom[mom > 0], 99), 0, 1) if (mom > 0).any() else mom
     # open land only counts where the ground is flat enough to build on
     fire = fire_at(year)
-    s = 100 * mom * room * cells["terrain"].values * adjacency * (1 - fire["fire_risk"].values) ** FIRE_EXPONENT
+    contract, contract_ending = farm_contracts(year)
+    farm = 1 - CONTRACT_PENALTY * contract
+    s = (100 * mom * room * cells["terrain"].values * adjacency * farm
+         * (1 - fire["fire_risk"].values) ** FIRE_EXPONENT)
     s[excluded.values] = 0
     out = pd.DataFrame({"score": s, "momentum": mom, "room": room, "adjacency": adjacency,
-                        "built_frac": built_frac.values})
+                        "built_frac": built_frac.values, "contract": contract,
+                        "contract_ending": contract_ending})
     return pd.concat([out, fire.reset_index(drop=True)], axis=1)
 
 
@@ -250,6 +294,8 @@ def zones_for(cy):
             "acres": round(float(((1 - zc["built_frac"]) * area).sum() / 4046.86)),
             "momentum": round(float(zc["momentum"].mean()), 2),
             "fire_risk": round(float(zc["fire_risk"].mean()), 2),
+            "contract_share": round(float(zc["contract"].mean()), 2),
+            "contract_ending_share": round(float(zc["contract_ending"].mean()), 2),
             "slope_mean": round(float(zc["slope_mean"].mean()), 1),
             "flat_share": round(float(zc["flat_share"].mean()), 2),
             "elev_m": round(float(zc["elev_m"].mean())),
@@ -330,13 +376,13 @@ write_geojson(allz, WEB_DATA / "recommend_zones.geojson")
 
 allc = gpd.GeoDataFrame(pd.concat(cell_frames, ignore_index=True), crs=ALBERS)
 for c in ("fire_risk", "fire_history", "fire_freq", "fire_reburn", "fire_last", "fire_detections", "momentum",
-          "adjacency", "flat_share", "terrain"):
+          "adjacency", "flat_share", "terrain", "contract", "contract_ending"):
     allc[c] = allc[c].round(2)
 allc["slope_mean"] = allc["slope_mean"].round(1)
 allc["elev_m"] = allc["elev_m"].round(0)
 CELL_PROPS = ["year", "score", "momentum", "room", "terrain", "flat_share", "slope_mean", "elev_m", "adjacency",
               "fire_risk", "fire_history", "fire_freq", "fire_reburn", "fire_last", "fire_detections",
-              "years_since_fire", "fhsz_class"]
+              "years_since_fire", "fhsz_class", "contract", "contract_ending"]
 make_pmtiles(allc[CELL_PROPS + ["geometry"]], WEB_DATA / "recommend_cells.pmtiles", "rec", 8, 13, CELL_PROPS,
              simplify_px=0, buffer_px=2, attribution="CA Development Explorer model")
 old = WEB_DATA / "recommend_cells.geojson"
@@ -353,6 +399,8 @@ write_json({
                  "water_cells": int((cells["water_frac"] > 0.4).sum()),
                  "too_steep_cells": int(cells["too_steep"].sum())},
     "fire_exponent": FIRE_EXPONENT,
+    "contract_penalty": CONTRACT_PENALTY,
+    "undated_from": UNDATED_FROM,
     "fire_half_life": HALF_LIFE,
     "fire_method": FIRE_METHOD,
     "terrain": {"slope_ok_pct": SLOPE_OK, "slope_max_pct": SLOPE_MAX, "dem": "USGS 3DEP 1 arc-second"},

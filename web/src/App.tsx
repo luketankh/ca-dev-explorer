@@ -46,8 +46,9 @@ function pointInRing([x, y]: number[], ring: number[][]): boolean {
   return inside;
 }
 
-// fire exponent used by the model (read from recommend.json on load)
+// fire exponent and farmland-contract penalty used by the model (read from recommend.json on load)
 let fireExponent = 2;
+let contractPenalty = 0.8;
 
 function recPopup(cell: MapGeoJSONFeature | undefined, zone: { properties: unknown } | undefined) {
   const c = (cell?.properties ?? {}) as Record<string, number | string>;
@@ -61,12 +62,14 @@ function recPopup(cell: MapGeoJSONFeature | undefined, zone: { properties: unkno
     <tr><th>Next to town</th><td>${pct(c.adjacency)}</td></tr>
     <tr><th>Terrain</th><td>${pct(c.flat_share)} flat (≤15% slope) · avg slope ${esc(c.slope_mean)}% · ${esc(c.elev_m)} m</td></tr>
     <tr><th>Open land</th><td>${Number(c.room) === 1 ? "Yes" : Number(c.room) > 0 ? "Partly built" : "Built up"}</td></tr>
+    <tr><th>Farmland contract</th><td>${Number(c.contract) > 0 ? `${pct(c.contract)} under Williamson Act / Farmland Security Zone` : "None"}${
+      Number(c.contract_ending) > 0 ? ` · ${pct(c.contract_ending)} contract ending within 5 yrs` : ""}</td></tr>
     <tr><th>Fire risk</th><td><b>${pct(c.fire_risk)}</b>${c.fhsz_class && c.fhsz_class !== "None" ? ` · FHSZ ${esc(c.fhsz_class)}` : ""}</td></tr>
     <tr><th>Fire history</th><td>${pct(c.fire_history)} (frequency ${pct(c.fire_freq)}, repeat burns ${pct(c.fire_reburn)},
       recent big fire ${pct(c.fire_last)})${c.years_since_fire !== null && c.years_since_fire !== undefined && c.years_since_fire !== ""
         ? ` · last fire ${Number(c.years_since_fire) === 0 ? "this year" : `${esc(c.years_since_fire)} yrs ago`}` : " · none on record"}</td></tr>` : "";
   return `<div class="pop"><h4>${head}</h4><table>${zoneRows}${cellRows}</table>
-    <div class="pop-id">500 m cell. Score = 100 × momentum × open land × flat share × next to town × (1 − fire risk)<sup>${fireExponent}</sup>.</div></div>`;
+    <div class="pop-id">500 m cell. Score = 100 × momentum × open land × flat share × next to town × (1 − ${contractPenalty} × farmland contract) × (1 − fire risk)<sup>${fireExponent}</sup>.</div></div>`;
 }
 
 function arrowPopup(f: MapGeoJSONFeature) {
@@ -174,6 +177,7 @@ export default function App() {
         setExtra({ counties: c, arrows: a, recZones: rz, recLabels, steep });
         setRecommend(rec);
         fireExponent = (rec as Recommend).fire_exponent ?? fireExponent;
+        contractPenalty = (rec as Recommend).contract_penalty ?? contractPenalty;
         setContext(ctx);
         setPlacesFc(p);
       },

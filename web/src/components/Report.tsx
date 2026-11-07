@@ -78,7 +78,8 @@ export default function Report({ stats, places, selected, year, context, arrows,
           <h3>Where to build next · predicted in {recYear}</h3>
           <div className="caption" style={{ marginTop: 0 }}>
             Using only data available in {recYear}: mostly open land just ahead of where homes went in {rec.window},
-            next to existing towns, on flat ground, with higher wildfire risk penalised progressively harder.
+            next to existing towns, on flat ground, not locked up in farmland contracts, with higher wildfire risk
+            penalised progressively harder.
             Move the year slider to see each year's prediction. Click a zone to fly there.
             {year > recYear && ` (No prediction for ${year} yet; showing the latest, ${recYear}.)`}
           </div>
@@ -99,7 +100,9 @@ export default function Report({ stats, places, selected, year, context, arrows,
                   <td><span className="rec-rank">{z.rank}</span></td>
                   <td>{z.label}
                     <div className="kpi-note">Avg slope {fmt(z.slope_mean, 1)}% · {pct(z.flat_share)} flat
-                      {z.fhsz !== "None" ? ` · Hazard zone: ${z.fhsz}` : ""}</div></td>
+                      {z.fhsz !== "None" ? ` · Hazard zone: ${z.fhsz}` : ""}
+                      {z.contract_share >= 0.05 ? ` · ${pct(z.contract_share)} under farmland contract` : ""}
+                      {z.contract_ending_share >= 0.05 ? ` · ${pct(z.contract_ending_share)} contract ending` : ""}</div></td>
                   <td className="num">{fmt(z.acres)}</td>
                   <td className="num">{pct(z.momentum)}</td>
                   <td className="num">{pct(z.fire_risk)}</td>
@@ -110,7 +113,8 @@ export default function Report({ stats, places, selected, year, context, arrows,
           <details className="method">
             <summary>How this is calculated, and how well it worked in the past</summary>
             <p>The county is cut into {recommend.cell_m} m cells. Each cell scores
-              <b> 100 × growth momentum × open land × flat share × next to town × (1 − fire risk)<sup>{recommend.fire_exponent}</sup></b>.
+              <b> 100 × growth momentum × open land × flat share × next to town × (1 − {recommend.contract_penalty} × farmland
+              contract) × (1 − fire risk)<sup>{recommend.fire_exponent}</sup></b>.
               The fire penalty grows faster than the risk: a cell keeps{" "}
               {[0.1, 0.25, 0.5].map((r) => `${Math.round((1 - r) ** recommend.fire_exponent * 100)}% of its score at ${r * 100}% risk`).join(", ")},
               and nothing at maximum risk.</p>
@@ -122,13 +126,19 @@ export default function Report({ stats, places, selected, year, context, arrows,
                 share at {recommend.terrain.slope_ok_pct}–{recommend.terrain.slope_max_pct}% (hillside, costly grading).
                 Steeper land doesn't count. Slope from {recommend.terrain.dem} elevation.</li>
               <li><b>Next to town:</b> within 1 km of built-up land, fading to zero at 4 km.</li>
+              <li><b>Farmland contract:</b> share of the cell under a Williamson Act or Farmland Security Zone
+                contract (county assessor), which blocks development while it runs. Each year only counts contracts
+                signed by then. A contract in non-renewal that ends within 5 years counts as ending, not as
+                protected. Contracts that ended before today's records aren't in the data, so past years miss some.</li>
               <li><b>Fire risk:</b> {recommend.fire_method} History and detections use a 5 km ring around each
                 cell, and the backtest only uses fires known at the time.</li>
               <li><b>Excluded:</b> the Delta Primary Zone (Delta Protection Act; {fmt(recommend.excluded.delta_primary_zone_cells)} cells),
                 mostly-water cells, and {fmt(recommend.excluded.too_steep_cells)} cells that are too steep (under 20% flat land).</li>
             </ul>
             <p><b>Backtest:</b> using only data available at the time, the top 5% of the county picked by the model
-              contained this share of the homes actually built in the next five years:</p>
+              contained this share of the homes actually built in the next five years. Buildings with no recorded year
+              only count as built from {recommend.undated_from}, when satellite footprints confirm them. The hazard
+              zones (2024) and terrain are today's maps.</p>
             <table className="rank">
               <thead><tr><th>As of</th><th>Homes built</th><th className="num">Model</th><th className="num">Edge-of-town rule</th><th className="num">Random</th></tr></thead>
               <tbody>
@@ -291,7 +301,7 @@ export default function Report({ stats, places, selected, year, context, arrows,
         </table>
         <details className="method">
           <summary>How scores are calculated</summary>
-          <p><b>Growth:</b> {stats.method.growth} Scored as a percentile among places with ≥300 dated homes.</p>
+          <p><b>Growth:</b> {stats.method.growth}</p>
           <p><b>Wildfire risk:</b> {stats.method.risk}</p>
           <p><b>Opportunity:</b> {stats.method.opportunity}.</p>
         </details>
