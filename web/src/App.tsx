@@ -33,6 +33,7 @@ const LAYER_LABELS: [LayerKey, string, string][] = [
   ["fires", "Fire perimeters", "CAL FIRE FRAP (all years) + NIFC WFIGS (current season)"],
   ["firms", "Fire detection heatmap", "NASA FIRMS MODIS, 2001–2025"],
   ["fhsz", "Fire Hazard Severity Zones", "CAL FIRE, SRA 2024 / LRA 2025"],
+  ["flood", "Flood zones", "FEMA flood maps (2009–2016) + DWR 200-year floodplain"],
   ["places", "Cities & growth choropleth", "Census TIGER places"],
   ["counties", "County comparison (statewide)", "Insurance: HearthMap/NBER · Crime: CA DOJ OpenJustice"],
 ];
@@ -55,7 +56,8 @@ function recPopup(cell: MapGeoJSONFeature | undefined, zone: { properties: unkno
   const z = (zone?.properties ?? {}) as Record<string, number | string>;
   const pct = (v: unknown) => `${Math.round(Number(v) * 100)}%`;
   const head = zone ? `#${esc(z.rank)} ${esc(z.label)}` : "Development suitability";
-  const zoneRows = zone ? `<tr><th>Zone size</th><td>${Number(z.acres).toLocaleString()} acres mostly open</td></tr>` : "";
+  const zoneRows = zone ? `<tr><th>Zone size</th><td>${Number(z.acres).toLocaleString()} acres mostly open</td></tr>
+    ${z.flood_100yr_share !== undefined ? `<tr><th>Flood</th><td>${floodSummary(z)}</td></tr>` : ""}` : "";
   const cellRows = cell ? `
     <tr><th>Cell score</th><td><b>${esc(c.score)}</b> / 100</td></tr>
     <tr><th>Growth momentum</th><td>${pct(c.momentum)}</td></tr>
@@ -70,6 +72,40 @@ function recPopup(cell: MapGeoJSONFeature | undefined, zone: { properties: unkno
         ? ` · last fire ${Number(c.years_since_fire) === 0 ? "this year" : `${esc(c.years_since_fire)} yrs ago`}` : " · none on record"}</td></tr>` : "";
   return `<div class="pop"><h4>${head}</h4><table>${zoneRows}${cellRows}</table>
     <div class="pop-id">500 m cell. Score = 100 × momentum × open land × flat share × next to town × (1 − ${contractPenalty} × farmland contract) × (1 − fire risk)<sup>${fireExponent}</sup>.</div></div>`;
+}
+
+/** One line of flood exposure for a zone or place (shares are 0-1 of its area). */
+function floodSummary(z: Record<string, number | string>) {
+  const share = (k: string) => Number(z[k] ?? 0);
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
+  const fema100 = share("flood_100yr_share") + share("flood_floodway_share");
+  const parts = [
+    `<b>${pct(fema100)}</b> in FEMA 100-year floodplain${share("flood_floodway_share") >= 0.01 ? ` (${pct(share("flood_floodway_share"))} floodway)` : ""}`,
+    share("flood_levee_share") >= 0.01 ? `${pct(share("flood_levee_share"))} levee-protected` : "",
+    share("flood_500yr_share") >= 0.01 ? `${pct(share("flood_500yr_share"))} in 500-year` : "",
+    `${pct(share("flood_200yr_share"))} in DWR 200-year floodplain`,
+  ];
+  return parts.filter(Boolean).join(" · ");
+}
+
+const FLOOD_LABEL: Record<string, string> = {
+  floodway: "Floodway", "100yr": "100-year floodplain", "500yr": "500-year floodplain", levee: "Levee-protected area",
+};
+const FLOOD_NOTE: Record<string, string> = {
+  floodway: "River channel kept clear for flood flows; effectively unbuildable.",
+  "100yr": "1% chance of flooding each year. Lenders require flood insurance; new homes must be raised above the flood level.",
+  "500yr": "0.2% chance of flooding each year. Moderate risk; insurance optional.",
+  levee: "Protected by a levee, but would flood if the levee failed.",
+};
+
+function floodPopup(f: MapGeoJSONFeature) {
+  const p = f.properties as Record<string, string | number>;
+  const cls = String(p.cls);
+  return `<div class="pop"><h4>${esc(FLOOD_LABEL[cls] ?? "Flood zone")}</h4><table>
+    <tr><th>FEMA zone</th><td>${esc(p.zone)}${p.sub ? ` · ${esc(String(p.sub).toLowerCase())}` : ""}</td></tr>
+    ${p.bfe !== undefined && p.bfe !== null && p.bfe !== "" ? `<tr><th>Base flood elevation</th><td>${esc(p.bfe)} ft</td></tr>` : ""}
+    </table><p class="pop-text">${esc(FLOOD_NOTE[cls] ?? "")}</p>
+    <div class="pop-id">FEMA National Flood Hazard Layer, San Joaquin County map (effective 2009–2016).</div></div>`;
 }
 
 function arrowPopup(f: MapGeoJSONFeature) {
@@ -145,7 +181,7 @@ export default function App() {
   const [playing, setPlaying] = useState(false);
   const [fireWindow, setFireWindow] = useState<FireWindow>("all");
   const [vis, setVis] = useState<Visibility>({
-    naip: false, buildings: true, arrows: true, fires: true, firms: false, fhsz: true, places: true,
+    naip: false, buildings: true, arrows: true, fires: true, firms: false, fhsz: true, flood: false, places: true,
     counties: true, recommend: true, terrain: true, steep: true,
   });
   const [recommend, setRecommend] = useState<Recommend | null>(null);
@@ -203,7 +239,7 @@ export default function App() {
 
     const popup = new Popup({ maxWidth: "300px" });
     const clickable = ["buildings-fill", "arrows-minor", "arrows-major", "arrows-minor-infill", "arrows-major-infill",
-      "rec-cells", "fires-fill", "places-fill", "counties-fill"];
+      "rec-cells", "fires-fill", "flood-fill", "places-fill", "counties-fill"];
     m.on("click", (e) => {
       const feats = m.queryRenderedFeatures(e.point, { layers: clickable.filter((l) => m.getLayer(l)) });
       const hit = (...ids: string[]) => feats.find((f) => ids.includes(f.layer.id));
@@ -211,6 +247,7 @@ export default function App() {
       const arrow = hit("arrows-minor", "arrows-major", "arrows-minor-infill", "arrows-major-infill");
       const recCell = hit("rec-cells");
       const fire = hit("fires-fill");
+      const flood = hit("flood-fill");
       const place = m.getZoom() >= 9.5 ? hit("places-fill") : undefined;
       const county = hit("counties-fill");
       if (b) popup.setLngLat(e.lngLat).setHTML(buildingPopup(b)).addTo(m);
@@ -226,6 +263,7 @@ export default function App() {
         popup.setLngLat(e.lngLat).setHTML(recPopup(recCell, zone)).addTo(m);
       }
       else if (fire) popup.setLngLat(e.lngLat).setHTML(firePopup(fire)).addTo(m);
+      else if (flood) popup.setLngLat(e.lngLat).setHTML(floodPopup(flood)).addTo(m);
       else if (place) setSelected(String(place.properties.GEOID));
       else if (county) popup.setLngLat(e.lngLat).setHTML(countyPopup(county, contextRef.current)).addTo(m);
     });
@@ -318,7 +356,7 @@ export default function App() {
       <aside className="side">
         <div className="brand">
           <h1>Project Marco Polo</h1>
-          <p>Where California is building, and how close it is to wildfire.</p>
+          <p>Where California is building, and how close it is to wildfire and flooding.</p>
         </div>
 
         <section>
@@ -395,6 +433,14 @@ export default function App() {
           {Object.entries(COLORS.hazard).map(([k, c]) => (
             <div key={k} className="sw"><i style={{ background: c }} />{k}</div>
           ))}
+          <div className="legend-title">Flood zones</div>
+          {(["floodway", "100yr", "500yr", "levee"] as const).map((k) => (
+            <div key={k} className="sw"><i style={{
+              background: COLORS.flood[k],
+              ...(k === "levee" ? { border: `1px dashed ${COLORS.floodLeveeLine}` } : {}),
+            }} />{FLOOD_LABEL[k]}</div>
+          ))}
+          <div className="sw"><i style={{ border: `2px dashed ${COLORS.flood200}`, background: "transparent" }} />DWR 200-year floodplain</div>
           <div className="legend-title">Cities: 10-yr residential growth</div>
           <div className="ramp" style={{
             background: `linear-gradient(90deg, ${COLORS.growthRamp.map(([, c]) => c).join(",")})`,
