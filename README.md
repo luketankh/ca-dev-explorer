@@ -5,13 +5,17 @@ A map explorer for real-estate developers that shows **how an area developed ove
 
 - **Buildings by year built.** Every building is coloured by its construction year and appears on
   the map in the year it was built.
-- **Aerial imagery by year.** USDA NAIP imagery (2012–2022) follows the slider.
 - **Where to build next, predicted each year.** Zones just ahead of the growth arrows, re-predicted for every
   slider year with only the data known then, plus what actually happened next.
 - **Wildfire history.** Historical fire perimeters plus a NASA FIRMS satellite fire-detection heatmap.
 - **Wildfire hazard.** CAL FIRE Fire Hazard Severity Zones.
+- **Flood zones and planned land use.** FEMA / DWR flood zones and city & county general plans (context only).
 - **Area report.** For each city: residential growth, homes built per year, wildfire exposure,
   and a transparent "up-and-coming" ranking.
+
+The map opens uncluttered: only buildings, growth arrows and the build-next prediction are on; every other
+layer is opt-in, and the legend lists only the layers that are on. The recommendations and area report open from
+the **Where to build next** button at the bottom right.
 
 MVP scope: **San Joaquin County** (Mountain House, Tracy, Lathrop, Manteca, Stockton, Lodi, …).
 The fire layers cover all of California.
@@ -21,7 +25,7 @@ The fire layers cover all of California.
 You need **Node.js 20+** (and `curl` + `unzip`, which macOS and most Linux systems already have).
 
 ```bash
-./fetch_data.sh   # downloads the pre-built map data (~95 MB) from the GitHub release "data-v6"
+./fetch_data.sh   # downloads the pre-built map data (~95 MB) from the GitHub release "data-v7"
 ./dev.sh          # installs packages on first run, then serves http://localhost:5173
 ```
 
@@ -33,8 +37,11 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ./run_pipeline.sh   # ~15 min; downloads ~1 GB (mostly the Microsoft California footprints)
 ```
 
-Flood data alone (on top of `data-v6`): `cd pipeline && ../.venv/bin/python 14_flood.py` (about a minute;
+Flood data alone (already in `data-v7`): `cd pipeline && ../.venv/bin/python 14_flood.py` (about a minute;
 downloads ~15 MB from FEMA and DWR). Re-run it after `09_stats.py` or `13_recommend.py`.
+
+General plan layer alone: `cd pipeline && ../.venv/bin/python 15_general_plans.py` (a few seconds, no download;
+reads `reference/general_plans/`).
 
 After a rebuild, publish new data for everyone by zipping the folder's contents as `map-data.zip`
 and attaching it to a new release (e.g. `data-v7`). Others can then run `./fetch_data.sh data-v7`.
@@ -62,15 +69,15 @@ the house's year. The last one or two years may be incomplete in assessor record
 | Buildings | [Overture Maps](https://overturemaps.org) buildings, release `2026-10-21.0` | ODbL / CDLA. Overture keeps only its last ~3 releases online |
 | Year built, farmland contracts | San Joaquin County parcels ([ArcGIS service](https://services2.arcgis.com/GQhSReJEO6f7tsvy/ArcGIS/rest/services/Parcels/FeatureServer)) | Only property fields are downloaded, including Williamson Act / Farmland Security Zone status. **Owner and mailing-address fields are not.** |
 | 2020 snapshot | [Microsoft US Building Footprints v2](https://github.com/microsoft/USBuildingFootprints) | ODbL |
-| Aerial imagery | USDA NAIP via [Microsoft Planetary Computer](https://planetarycomputer.microsoft.com/dataset/naip) | Loaded live in the browser, not stored |
 | Fire perimeters | [CAL FIRE FRAP California Fire Perimeters (all)](https://data.ca.gov/dataset/california-fire-perimeters-all) through 2025, plus [NIFC WFIGS](https://data-nifc.opendata.arcgis.com/) perimeters for the current season | FRAP is the state's authoritative record (fires 10+ acres). NIFC's interagency *history* was dropped: it is complete only to ~2019 and missed the 2020 SCU Lightning Complex |
 | Fire detections | [NASA FIRMS](https://firms.modaps.eosdis.nasa.gov/download/) MODIS yearly country files, 2001–2025 | Vegetation fires only (type 0), confidence ≥ 30 |
 | Flood zones | [FEMA National Flood Hazard Layer](https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28), San Joaquin County map 06077C (effective 2009–2016) | Public domain. Floodway, 100-year (A/AE/AH/AO), 500-year and levee-protected areas. Shown for context; not in the score |
 | 200-year floodplain | DWR [Best Available Maps](https://ferix.water.ca.gov/arcgis/rest/services/other/BAM/MapServer/11) (SB 5), USACE Sacramento–San Joaquin Comprehensive Study | Coarse, valley-wide study; use as a flag. California requires 200-year protection for new urban development in the Central Valley |
+| General plan land use | California Resources Agency / UC Davis ICE general plans ("rural residential" variant), via [Data Basin](https://databasin.org/datasets/1cda3056a4ad4ece86eb5eda4ef17e82/); see `reference/general_plans/README.md` | Free to use; credit the Resources Agency. Plans of c. 2004–2014, not current zoning. Shown for context; not in the score |
 | Hazard zones | CAL FIRE FHSZ, SRA (2024) + LRA (2025), via a public Sonoma County mirror | Confirm with [CAL FIRE OSFM](https://osfm.fire.ca.gov/) before relying on them |
-| Elevation / slope | [USGS 3DEP](https://www.usgs.gov/3d-elevation-program) 1 arc-second DEM (model); [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) (map shading) | Public domain (USGS). Slope classes: ≤ 15% buildable, 15–25% hillside, > 25% too steep |
-| Home insurance | [HearthMap](https://hearthmap.app/home-insurance-by-county/california) county premiums (2024), from Keys & Mulder, NBER WP 32579 | CC BY 4.0, attribution required. Median escrowed premium for mortgaged owner-occupied homes; county level only; 57 of 58 counties |
-| Crime | [CA DOJ OpenJustice](https://openjustice.doj.ca.gov/exploration/crime-statistics/crimes-clearances) Crimes & Clearances 1985–2025, by agency | Railroad police excluded. City rates only where the city has its own police department; otherwise the Sheriff's patrol-area rate |
+| Elevation / slope | [USGS 3DEP](https://www.usgs.gov/3d-elevation-program) 1 arc-second DEM (model); [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) (map shading) | Public domain (USGS). Slope classes: ≤ 15% buildable, 15–25% hillside, > 25% too steep. Used in the model; no longer drawn as a map layer |
+| Home insurance | [HearthMap](https://hearthmap.app/home-insurance-by-county/california) county premiums (2024), from Keys & Mulder, NBER WP 32579 | CC BY 4.0, attribution required. Median escrowed premium for mortgaged owner-occupied homes; county level only; 57 of 58 counties. **Still built by step 11, but no longer shown in the app** |
+| Crime | [CA DOJ OpenJustice](https://openjustice.doj.ca.gov/exploration/crime-statistics/crimes-clearances) Crimes & Clearances 1985–2025, by agency | Railroad police excluded. City rates only where the city has its own police department; otherwise the Sheriff's patrol-area rate. **Still built by step 11, but no longer shown in the app** |
 | Population | [CA Dept. of Finance E-1](https://dof.ca.gov/forecasting/demographics/estimates-e1/) (Jan 1, 2025) | Denominator for crime rates (the Census API now requires a key) |
 | Boundaries | Census TIGERweb (state, county, cities, CDPs) | |
 | Basemap | [OpenFreeMap](https://openfreemap.org) Positron | Free, no API key |
@@ -91,8 +98,8 @@ the house's year. The last one or two years may be incomplete in assessor record
   growth score. (It was `growth_score − 0.5 × risk_score`; with growth on a fixed scale, subtracting let
   fire risk swamp growth, tying Tracy at 12% growth with towns at 3–4%.)
 
-These weights are a starting point for discussion, not a validated model. Insurance and crime are
-shown as context in the report and statewide county map but are **not** part of the score yet.
+These weights are a starting point for discussion, not a validated model. Insurance and crime are not part
+of the score, and the app no longer shows them (removed to declutter; `11_insurance_crime.py` still builds the data).
 
 ## Fire history (frequency and recency)
 
@@ -209,7 +216,10 @@ floodway, levee-protected areas and the DWR 200-year floodplain (SB 5), visible 
 and the "Flood zones" map layer. Several top zones around Lathrop sit mostly behind levees and inside the
 200-year floodplain, so a flood penalty is the obvious next step for the score.
 
-Not included yet: zoning/general plans and spheres of influence, sewer/water capacity, land prices and
+General plan land use is shown (the "General plan land use" layer) but not scored. It is 10–20 years old and is
+not zoning, so use it as a first check on whether housing is planned for an area.
+
+Not included yet: current zoning and spheres of influence, sewer/water capacity, land prices and
 ownership, and approved but unbuilt subdivisions. Treat zones as places to investigate, not approvals.
 
 ## Project layout
@@ -228,11 +238,13 @@ pipeline/            Python data pipeline (run in order, or ./run_pipeline.sh)
   09_stats.py          Per-place metrics + scores -> web/public/data/{places.geojson,stats.json}
   10_tiles.py, tiler.py  Pure-Python vector tiler -> web/public/data/*.pmtiles
   11_insurance_crime.py  County insurance + crime (statewide), city crime rates -> counties.geojson, context.json
+                         (not shown in the app any more)
   12_growth_arrows.py    Growth-direction arrows per place and year -> growth_arrows.geojson
   13_recommend.py        Where-to-build-next model for every year 2000-2025 + backtest ->
                          recommend_cells.pmtiles, recommend_zones.geojson, recommend.json
   14_flood.py            FEMA flood zones + DWR 200-year floodplain -> flood.pmtiles, flood_200yr.geojson;
                          adds flood_* shares to places, county stats and every year's zones (not scored)
+  15_general_plans.py    General plan land use (reference/general_plans) -> general_plans.geojson (not scored)
 web/                 React + MapLibre GL + PMTiles front end (Vite)
 data/                Raw and intermediate files (git-ignored)
 ```
@@ -242,7 +254,7 @@ data/                Raw and intermediate files (git-ignored)
 1. Set `COUNTY_FIPS`, `AOI_NAME` and `AOI_BBOX` in `pipeline/common.py`.
 2. Find that county's assessor parcel service with a year-built field and update `04_parcels.py`.
    Availability varies by county; Regrid and ReportAll sell this data statewide.
-3. Run `./run_pipeline.sh`, then update `INITIAL_VIEW`, `DEFAULT_PLACE` and `NAIP_YEARS`
+3. Run `./run_pipeline.sh`, then update `INITIAL_VIEW` and `DEFAULT_PLACE`
    in `web/src/config.ts`.
 
 ## Known limitations / next steps
@@ -250,6 +262,6 @@ data/                Raw and intermediate files (git-ignored)
 - Single county. Statewide coverage needs parcel data for each county (or a paid provider).
 - Score flood risk (it is shown, not scored), e.g. a penalty for the 100-year floodplain and a flag for the
   200-year floodplain without 200-year protection.
-- Additional useful layers: zoning/general plans, home prices (Zillow ZHVI),
+- Score general plan land use (e.g. favour cells planned for housing), current zoning, home prices (Zillow ZHVI),
   Census building permits, and VIIRS (375 m) fire detections alongside MODIS.
 - Building detection on each NAIP year would give "first seen" dates where assessor data is missing.

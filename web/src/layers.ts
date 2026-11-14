@@ -1,44 +1,21 @@
 import type { ExpressionSpecification, FilterSpecification, Map as MlMap } from "maplibre-gl";
-import { COLORS, DATA, YEAR_MAX } from "./config";
-import { naipTileUrl, naipYearFor } from "./naip";
+import { COLORS, DATA, PLAN_CLASSES, YEAR_MAX } from "./config";
 
 export type FireWindow = "all" | "10y" | "year";
-export type LayerKey = "naip" | "buildings" | "arrows" | "recommend" | "terrain" | "steep" | "fires" | "firms" | "fhsz"
-  | "flood" | "places" | "counties";
-export type CountyMetric = "premium" | "violent_per_1k" | "property_per_1k";
-
-export const COUNTY_METRICS: Record<CountyMetric, { label: string; stops: [number, string][]; fmt: (v: number) => string }> = {
-  premium: {
-    label: "Home insurance, median annual premium (2024)",
-    stops: [[1200, "#e4e0f8"], [1700, "#b3a9ee"], [2300, "#7d6fe0"], [3000, "#4b3cb8"], [3900, "#2e2370"]],
-    fmt: (v) => "$" + Math.round(v).toLocaleString(),
-  },
-  violent_per_1k: {
-    label: "Violent crimes per 1,000 residents (2025)",
-    stops: [[1, "#e4e0f8"], [2.5, "#b3a9ee"], [4, "#7d6fe0"], [5.5, "#4b3cb8"], [7.5, "#2e2370"]],
-    fmt: (v) => v.toFixed(1),
-  },
-  property_per_1k: {
-    label: "Property crimes per 1,000 residents (2025)",
-    stops: [[5, "#e4e0f8"], [10, "#b3a9ee"], [15, "#7d6fe0"], [20, "#4b3cb8"], [27, "#2e2370"]],
-    fmt: (v) => v.toFixed(1),
-  },
-};
+export type LayerKey = "buildings" | "arrows" | "recommend" | "terrain" | "fires" | "firms" | "fhsz" | "flood" | "plans" | "places";
 export type Visibility = Record<LayerKey, boolean>;
 
 export const LAYER_IDS: Record<LayerKey, string[]> = {
-  naip: ["naip"],
   buildings: ["buildings-fill", "buildings-line"],
   fires: ["fires-fill", "fires-line"],
   firms: ["firms-heat"],
   fhsz: ["fhsz-fill"],
   flood: ["flood-fill", "flood-levee-line", "flood200-line"],
+  plans: ["plans-fill", "plans-line"],
   places: ["places-fill", "places-line"],
   arrows: ["arrows-major", "arrows-minor", "arrows-major-infill", "arrows-minor-infill"],
   recommend: ["rec-cells", "rec-zones-line", "rec-labels"],
   terrain: ["hillshade"],
-  steep: ["steep-fill"],
-  counties: ["counties-fill", "counties-line"],
 };
 
 function firstSymbolLayer(map: MlMap): string | undefined {
@@ -90,16 +67,9 @@ export function fireFilter(year: number, w: FireWindow): FilterSpecification {
 
 /** Add every data source/layer. `withPlaces: false` skips the places layers (for secondary maps). */
 export interface ExtraData {
-  counties: GeoJSON.FeatureCollection;
   arrows: GeoJSON.FeatureCollection;
   recZones: GeoJSON.FeatureCollection;
   recLabels: GeoJSON.FeatureCollection;
-  steep: GeoJSON.FeatureCollection;
-}
-
-export function countyFill(metric: CountyMetric): ExpressionSpecification {
-  return ["case", ["==", ["get", metric], null], "#f0efec",
-    ["interpolate", ["linear"], ["get", metric], ...rampStops(COUNTY_METRICS[metric].stops)]] as ExpressionSpecification;
 }
 
 /** Predictions exist for REC_FIRST..REC_LAST; slider years outside that use the nearest one. */
@@ -134,10 +104,6 @@ function addArrowImage(map: MlMap) {
   map.addImage("growth-arrow", g.getImageData(0, 0, w, h), { pixelRatio: 2 });
 }
 
-export function setCountyMetric(map: MlMap, metric: CountyMetric) {
-  if (map.getLayer("counties-fill")) map.setPaintProperty("counties-fill", "fill-color", countyFill(metric));
-}
-
 export function addDataLayers(map: MlMap, places: GeoJSON.FeatureCollection, withPlaces = true,
                               extra?: ExtraData) {
   const before = firstSymbolLayer(map);
@@ -153,30 +119,21 @@ export function addDataLayers(map: MlMap, places: GeoJSON.FeatureCollection, wit
       id: "hillshade", type: "hillshade", source: "dem",
       paint: { "hillshade-exaggeration": 0.35, "hillshade-shadow-color": "#5b5a55", "hillshade-highlight-color": "#ffffff" },
     }, before);
-    // steep ground from USGS 3DEP slope (pipeline): hillside 15-25 %, too steep > 25 %
-    map.addSource("steep", { type: "geojson", data: extra.steep });
-    map.addLayer({
-      id: "steep-fill", type: "fill", source: "steep",
-      paint: {
-        "fill-color": ["match", ["get", "cls"], 2, COLORS.steep, COLORS.hillside],
-        "fill-opacity": 0.5,
-      },
-    }, before);
-
-    // statewide county comparison (insurance / crime); fades out as you zoom into the county
-    map.addSource("counties", { type: "geojson", data: extra.counties, promoteId: "GEOID" });
-    map.addLayer({
-      id: "counties-fill", type: "fill", source: "counties", maxzoom: 10,
-      paint: {
-        "fill-color": countyFill("premium"),
-        "fill-opacity": ["interpolate", ["linear"], ["zoom"], 7, 0.75, 9.5, 0],
-      },
-    }, before);
-    map.addLayer({
-      id: "counties-line", type: "line", source: "counties", maxzoom: 10,
-      paint: { "line-color": "#ffffff", "line-width": 1, "line-opacity": 0.9 },
-    }, before);
   }
+
+  // general plan land use (reference/general_plans via pipeline/15_general_plans.py), under the hazard layers
+  map.addSource("plans", { type: "geojson", data: DATA.plans });
+  map.addLayer({
+    id: "plans-fill", type: "fill", source: "plans",
+    paint: {
+      "fill-color": ["match", ["get", "luc"], ...PLAN_CLASSES.flatMap(([code, , color]) => [code, color]), "#e6e4de"] as unknown as ExpressionSpecification,
+      "fill-opacity": ["interpolate", ["linear"], ["zoom"], 8, 0.6, 13, 0.45],
+    },
+  }, before);
+  map.addLayer({
+    id: "plans-line", type: "line", source: "plans", minzoom: 10,
+    paint: { "line-color": "#ffffff", "line-width": 0.6, "line-opacity": 0.8 },
+  }, before);
 
   // flood: FEMA flood zones (fill by class) + DWR 200-year floodplain (dashed outline); built by pipeline/14_flood.py
   map.addSource("flood", { type: "vector", url: DATA.flood });
@@ -215,7 +172,7 @@ export function addDataLayers(map: MlMap, places: GeoJSON.FeatureCollection, wit
   map.addSource("fires", { type: "vector", url: DATA.fires });
   map.addLayer({
     id: "fires-fill", type: "fill", source: "fires", "source-layer": "fires",
-    // lighter when zoomed out statewide so the county comparison stays readable
+    // lighter when zoomed out statewide
     paint: { "fill-color": COLORS.fireRecent, "fill-opacity": ["interpolate", ["linear"], ["zoom"], 5, 0.18, 8, 0.35] },
   }, before);
   map.addLayer({
@@ -359,35 +316,8 @@ export function applyYear(map: MlMap, year: number, w: FireWindow, use: Building
   ] as ExpressionSpecification);
 }
 
-/** Show NAIP imagery for the vintage nearest (at or before) `year`. Returns the vintage shown. */
-export async function setNaip(map: MlMap, year: number, visible: boolean): Promise<number> {
-  const vintage = naipYearFor(year);
-  const current = map.getSource("naip") as unknown as { _vintage?: number } | undefined;
-  if (!visible) {
-    if (map.getLayer("naip")) map.setLayoutProperty("naip", "visibility", "none");
-    return vintage;
-  }
-  if (current && current._vintage === vintage) {
-    map.setLayoutProperty("naip", "visibility", "visible");
-    return vintage;
-  }
-  const url = await naipTileUrl(vintage);
-  if (map.getLayer("naip")) map.removeLayer("naip");
-  if (map.getSource("naip")) map.removeSource("naip");
-  map.addSource("naip", {
-    type: "raster", tiles: [url], tileSize: 256, minzoom: 11, maxzoom: 18,
-    attribution: `USDA NAIP ${vintage} via Microsoft Planetary Computer`,
-  });
-  (map.getSource("naip") as unknown as { _vintage: number })._vintage = vintage;
-  // imagery sits under all data layers
-  const firstData = ["flood-fill", "fhsz-fill", "fires-fill"].find((id) => map.getLayer(id));
-  map.addLayer({ id: "naip", type: "raster", source: "naip", minzoom: 11 }, firstData);
-  return vintage;
-}
-
 export function setVisibility(map: MlMap, vis: Visibility) {
   (Object.keys(LAYER_IDS) as LayerKey[]).forEach((k) => {
-    if (k === "naip") return;
     LAYER_IDS[k].forEach((id) => {
       if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", vis[k] ? "visible" : "none");
     });

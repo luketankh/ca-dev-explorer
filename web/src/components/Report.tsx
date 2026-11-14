@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Context, PlaceMetrics, Recommend, Stats } from "../types";
+import type { PlaceMetrics, Recommend, Stats } from "../types";
 import BuiltChart from "./BuiltChart";
 import { recYearFor } from "../layers";
 
@@ -8,7 +8,6 @@ interface Props {
   places: PlaceMetrics[];
   selected: string | null;
   year: number;
-  context: Context | null;
   arrows: GeoJSON.FeatureCollection | null;
   recommend: Recommend | null;
   onSelect: (geoid: string | null) => void;
@@ -34,12 +33,7 @@ function Kpi({ label, value, note }: { label: string; value: string; note?: stri
 const fema100 = (a: { flood_100yr_share?: number; flood_floodway_share?: number }) =>
   (a.flood_100yr_share ?? 0) + (a.flood_floodway_share ?? 0);
 
-function vsState(v: number, s: number) {
-  const d = Math.round((v / s - 1) * 100);
-  return d === 0 ? "same as state" : `${Math.abs(d)}% ${d > 0 ? "above" : "below"} state`;
-}
-
-export default function Report({ stats, places, selected, year, context, arrows, recommend, onSelect, onPickYear,
+export default function Report({ stats, places, selected, year, arrows, recommend, onSelect, onPickYear,
   onZone }: Props) {
   const [chartUse, setChartUse] = useState<"res" | "ci">("res");
   const recYear = recYearFor(year);
@@ -62,12 +56,9 @@ export default function Report({ stats, places, selected, year, context, arrows,
     .filter((g) => g.year === year && (p ? g.GEOID === p.GEOID : true))
     .sort((a, b) => b.new_homes - a.new_homes);
   const growthShown = growth.slice(0, p ? 6 : 5);
-  const crime = context ? (p ? context.places[p.GEOID] : null) : null;
-  const ctyC = context?.county;
-  const st = context?.state;
 
   return (
-    <aside className="report">
+    <aside className="report" id="report">
       <header className="report-head">
         {p && <button className="link" onClick={() => onSelect(null)}>← San Joaquin County</button>}
         <h2>{area.name}</h2>
@@ -214,34 +205,6 @@ export default function Report({ stats, places, selected, year, context, arrows,
           <div className="caption">No cluster of 20+ new homes in the 5 years to {year}.</div>
         )}
       </section>
-
-      {context && ctyC && st && (
-        <section>
-          <h3>Cost of ownership &amp; safety</h3>
-          <div className="kpis">
-            <Kpi label={`Home insurance, county median (${context.insurance_year})`}
-              value={ctyC.premium ? `$${fmt(ctyC.premium)}/yr` : "–"}
-              note={ctyC.premium ? `${vsState(ctyC.premium, st.premium_median)} median · #${ctyC.premium_rank} of ${st.premium_counties} counties (1 = priciest)` : undefined} />
-            <Kpi label="Premium as % of home value" value={ctyC.premium_pct_of_home_value ? `${ctyC.premium_pct_of_home_value}%` : "–"}
-              note={ctyC.median_home_value ? `median home value $${fmt(ctyC.median_home_value)}` : undefined} />
-            <Kpi label={`Violent crimes per 1,000 (${context.crime_year})`}
-              value={fmt((crime ?? ctyC).violent_per_1k, 1)}
-              note={`${vsState((crime ?? ctyC).violent_per_1k, st.violent_per_1k)} (${fmt(st.violent_per_1k, 1)})`} />
-            <Kpi label={`Property crimes per 1,000 (${context.crime_year})`}
-              value={fmt((crime ?? ctyC).property_per_1k, 1)}
-              note={`${vsState((crime ?? ctyC).property_per_1k, st.property_per_1k)} (${fmt(st.property_per_1k, 1)})`} />
-          </div>
-          <div className="caption">
-            {crime
-              ? crime.crime_coverage === "own"
-                ? `Crime reported by the ${crime.crime_agency}.`
-                : `${area.name} has no police department of its own; figures are for the area the ${crime.crime_agency.replace(" (unincorporated + contract cities)", "")} patrols (${fmt(crime.crime_pop)} residents).`
-              : `County-wide: all agencies except railroad police. Crime count change 2015–2025: ${fmt(ctyC.crime_change_10yr_pct, 1)}%.`}
-            {" "}Insurance is a county-level median of escrowed premiums (HearthMap, from NBER WP 32579); it is the
-            same for every place in the county.
-          </div>
-        </section>
-      )}
 
       <section>
         <h3>Wildfire exposure</h3>
