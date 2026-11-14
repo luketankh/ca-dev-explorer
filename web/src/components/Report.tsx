@@ -30,6 +30,10 @@ function Kpi({ label, value, note }: { label: string; value: string; note?: stri
   );
 }
 
+/** Share in FEMA's 100-year floodplain, floodway included (the pipeline stores them as separate classes). */
+const fema100 = (a: { flood_100yr_share?: number; flood_floodway_share?: number }) =>
+  (a.flood_100yr_share ?? 0) + (a.flood_floodway_share ?? 0);
+
 function vsState(v: number, s: number) {
   const d = Math.round((v / s - 1) * 100);
   return d === 0 ? "same as state" : `${Math.abs(d)}% ${d > 0 ? "above" : "below"} state`;
@@ -102,7 +106,10 @@ export default function Report({ stats, places, selected, year, context, arrows,
                     <div className="kpi-note">Avg slope {fmt(z.slope_mean, 1)}% · {pct(z.flat_share)} flat
                       {z.fhsz !== "None" ? ` · Hazard zone: ${z.fhsz}` : ""}
                       {z.contract_share >= 0.05 ? ` · ${pct(z.contract_share)} under farmland contract` : ""}
-                      {z.contract_ending_share >= 0.05 ? ` · ${pct(z.contract_ending_share)} contract ending` : ""}</div></td>
+                      {z.contract_ending_share >= 0.05 ? ` · ${pct(z.contract_ending_share)} contract ending` : ""}
+                      {fema100(z) >= 0.05 ? ` · ${pct(fema100(z))} in 100-yr floodplain` : ""}
+                      {(z.flood_levee_share ?? 0) >= 0.05 ? ` · ${pct(z.flood_levee_share)} levee-protected` : ""}
+                      {(z.flood_200yr_share ?? 0) >= 0.05 ? ` · ${pct(z.flood_200yr_share)} in 200-yr floodplain` : ""}</div></td>
                   <td className="num">{fmt(z.acres)}</td>
                   <td className="num">{pct(z.momentum)}</td>
                   <td className="num">{pct(z.fire_risk)}</td>
@@ -151,8 +158,9 @@ export default function Report({ stats, places, selected, year, context, arrows,
                 ))}
               </tbody>
             </table>
-            <p>Not yet included: zoning and general plans, sewer/water capacity, flood zones, land prices and
-              ownership. Treat zones as places to investigate, not approvals.</p>
+            <p>Flood zones are shown on the map and next to each zone, but are not part of the score yet.
+              Not yet included: zoning and general plans, sewer/water capacity, land prices and ownership.
+              Treat zones as places to investigate, not approvals.</p>
           </details>
         </section>
       )}
@@ -269,6 +277,23 @@ export default function Report({ stats, places, selected, year, context, arrows,
             ))}
         </div>
       </section>
+
+      {area.flood_100yr_share !== undefined && (
+        <section>
+          <h3>Flood exposure</h3>
+          <div className="kpis">
+            <Kpi label="Land in FEMA 100-year floodplain" value={pct(fema100(area))}
+              note="1% chance a year · lenders require flood insurance" />
+            <Kpi label="Floodway" value={pct(area.flood_floodway_share)} note="river channel area, effectively unbuildable" />
+            <Kpi label="Levee-protected land" value={pct(area.flood_levee_share)} note="would flood if a levee failed" />
+            <Kpi label="Land in 500-year floodplain" value={pct(area.flood_500yr_share)} note="0.2% chance a year" />
+            <Kpi label="Land in DWR 200-year floodplain" value={pct(area.flood_200yr_share)}
+              note="California SB 5: new urban development here needs 200-year flood protection" />
+          </div>
+          <div className="caption">{stats.method.flood ?? "FEMA flood zones and DWR 200-year floodplain."} Turn on
+            “Flood zones” in the layer list to see them on the map.</div>
+        </section>
+      )}
 
       {p && (
         <section>

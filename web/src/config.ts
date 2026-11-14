@@ -20,6 +20,8 @@ export const DATA = {
   recZones: `${base}data/recommend_zones.geojson`,
   recommend: `${base}data/recommend.json`,
   steep: `${base}data/steep_terrain.geojson`,
+  flood: `pmtiles://${location.origin}${base}data/flood.pmtiles`,
+  flood200: `${base}data/flood_200yr.geojson`,
 };
 
 // NAIP vintages available for San Joaquin County on Microsoft Planetary Computer
@@ -72,6 +74,15 @@ export const COLORS = {
     [100, "#0d6b49"],
   ] as [number, string][],
   suitDark: "#0d6b49",
+  // flood: one cyan ordinal ramp, darker = more likely to flood (kept off the building blues and the aqua suitability ramp)
+  flood: {
+    floodway: "#0a5f7a",
+    "100yr": "#2aa3c9",
+    "500yr": "#9fd8ea",
+    levee: "#d4edf5",
+  } as Record<string, string>,
+  floodLeveeLine: "#5fa9c2",
+  flood200: "#6f3fb0", // DWR 200-year floodplain outline (violet, dashed)
   // terrain: brown ordinal pair
   hillside: "#e2cfa8",
   steep: "#a07d4f",
