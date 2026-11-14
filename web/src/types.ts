@@ -31,6 +31,12 @@ export interface PlaceMetrics {
   last_fire_year: number | null;
   fhsz_high_vhigh_share: number;
   buildings_in_fhsz_share: number;
+  // flood: share of land in each class (pipeline/14_flood.py; absent if that step hasn't run)
+  flood_floodway_share?: number;
+  flood_100yr_share?: number; // 100-year floodplain excluding the floodway
+  flood_500yr_share?: number;
+  flood_levee_share?: number;
+  flood_200yr_share?: number; // DWR 200-year floodplain (overlaps the FEMA classes)
   growth_score: number | null;
   risk_score: number;
   opportunity_score: number | null;
@@ -90,6 +96,11 @@ export interface RecZone {
   elev_m: number;
   contract_share: number;
   contract_ending_share: number;
+  flood_floodway_share?: number;
+  flood_100yr_share?: number;
+  flood_500yr_share?: number;
+  flood_levee_share?: number;
+  flood_200yr_share?: number;
   lon: number;
   lat: number;
 }
@@ -118,6 +129,7 @@ export interface Recommend {
   undated_from: number;
   fire_half_life: number;
   fire_method: string;
+  flood_method?: string;
 }
 
 export interface Stats {
@@ -131,5 +143,5 @@ export interface Stats {
     before: number;
   };
   places: Record<string, { name: string; kind: string; yearly: number[]; yearly_ci_sqft: number[]; before: number }>;
-  method: { fire_buffer_km: number; fire_since: number; growth: string; risk: string; opportunity: string };
+  method: { fire_buffer_km: number; fire_since: number; growth: string; risk: string; opportunity: string; flood?: string };
 }
