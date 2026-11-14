@@ -33,6 +33,9 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ./run_pipeline.sh   # ~15 min; downloads ~1 GB (mostly the Microsoft California footprints)
 ```
 
+Flood data alone (on top of `data-v6`): `cd pipeline && ../.venv/bin/python 14_flood.py` (about a minute;
+downloads ~15 MB from FEMA and DWR). Re-run it after `09_stats.py` or `13_recommend.py`.
+
 After a rebuild, publish new data for everyone by zipping the folder's contents as `map-data.zip`
 and attaching it to a new release (e.g. `data-v7`). Others can then run `./fetch_data.sh data-v7`.
 
@@ -62,6 +65,8 @@ the house's year. The last one or two years may be incomplete in assessor record
 | Aerial imagery | USDA NAIP via [Microsoft Planetary Computer](https://planetarycomputer.microsoft.com/dataset/naip) | Loaded live in the browser, not stored |
 | Fire perimeters | [CAL FIRE FRAP California Fire Perimeters (all)](https://data.ca.gov/dataset/california-fire-perimeters-all) through 2025, plus [NIFC WFIGS](https://data-nifc.opendata.arcgis.com/) perimeters for the current season | FRAP is the state's authoritative record (fires 10+ acres). NIFC's interagency *history* was dropped: it is complete only to ~2019 and missed the 2020 SCU Lightning Complex |
 | Fire detections | [NASA FIRMS](https://firms.modaps.eosdis.nasa.gov/download/) MODIS yearly country files, 2001–2025 | Vegetation fires only (type 0), confidence ≥ 30 |
+| Flood zones | [FEMA National Flood Hazard Layer](https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28), San Joaquin County map 06077C (effective 2009–2016) | Public domain. Floodway, 100-year (A/AE/AH/AO), 500-year and levee-protected areas. Shown for context; not in the score |
+| 200-year floodplain | DWR [Best Available Maps](https://ferix.water.ca.gov/arcgis/rest/services/other/BAM/MapServer/11) (SB 5), USACE Sacramento–San Joaquin Comprehensive Study | Coarse, valley-wide study; use as a flag. California requires 200-year protection for new urban development in the Central Valley |
 | Hazard zones | CAL FIRE FHSZ, SRA (2024) + LRA (2025), via a public Sonoma County mirror | Confirm with [CAL FIRE OSFM](https://osfm.fire.ca.gov/) before relying on them |
 | Elevation / slope | [USGS 3DEP](https://www.usgs.gov/3d-elevation-program) 1 arc-second DEM (model); [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) (map shading) | Public domain (USGS). Slope classes: ≤ 15% buildable, 15–25% hillside, > 25% too steep |
 | Home insurance | [HearthMap](https://hearthmap.app/home-insurance-by-county/california) county premiums (2024), from Keys & Mulder, NBER WP 32579 | CC BY 4.0, attribution required. Median escrowed premium for mortgaged owner-occupied homes; county level only; 57 of 58 counties |
@@ -199,9 +204,13 @@ What the backtest can and can't see:
 Previous figures, for reference: 56 / 48 / 52 / 40% (model) and 35 / 29 / 31 / 25% (edge-of-town rule),
 before the undated-building fix and the farmland factor.
 
-Not included yet: zoning/general plans and spheres of influence, sewer/water capacity, FEMA flood
-zones and the 200-year floodplain (SB 5), land prices and ownership, and approved but unbuilt subdivisions. Treat zones as places to
-investigate, not approvals.
+Flood risk is shown but not scored: `14_flood.py` adds each zone's share of land in the FEMA 100-year floodplain,
+floodway, levee-protected areas and the DWR 200-year floodplain (SB 5), visible in the zone list, the zone popup
+and the "Flood zones" map layer. Several top zones around Lathrop sit mostly behind levees and inside the
+200-year floodplain, so a flood penalty is the obvious next step for the score.
+
+Not included yet: zoning/general plans and spheres of influence, sewer/water capacity, land prices and
+ownership, and approved but unbuilt subdivisions. Treat zones as places to investigate, not approvals.
 
 ## Project layout
 
@@ -222,6 +231,8 @@ pipeline/            Python data pipeline (run in order, or ./run_pipeline.sh)
   12_growth_arrows.py    Growth-direction arrows per place and year -> growth_arrows.geojson
   13_recommend.py        Where-to-build-next model for every year 2000-2025 + backtest ->
                          recommend_cells.pmtiles, recommend_zones.geojson, recommend.json
+  14_flood.py            FEMA flood zones + DWR 200-year floodplain -> flood.pmtiles, flood_200yr.geojson;
+                         adds flood_* shares to places, county stats and every year's zones (not scored)
 web/                 React + MapLibre GL + PMTiles front end (Vite)
 data/                Raw and intermediate files (git-ignored)
 ```
@@ -237,6 +248,8 @@ data/                Raw and intermediate files (git-ignored)
 ## Known limitations / next steps
 
 - Single county. Statewide coverage needs parcel data for each county (or a paid provider).
-- Additional useful layers: FEMA flood zones, zoning/general plans, home prices (Zillow ZHVI),
+- Score flood risk (it is shown, not scored), e.g. a penalty for the 100-year floodplain and a flag for the
+  200-year floodplain without 200-year protection.
+- Additional useful layers: zoning/general plans, home prices (Zillow ZHVI),
   Census building permits, and VIIRS (375 m) fire detections alongside MODIS.
 - Building detection on each NAIP year would give "first seen" dates where assessor data is missing.
