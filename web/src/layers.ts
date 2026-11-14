@@ -4,7 +4,7 @@ import { naipTileUrl, naipYearFor } from "./naip";
 
 export type FireWindow = "all" | "10y" | "year";
 export type LayerKey = "naip" | "buildings" | "arrows" | "recommend" | "terrain" | "steep" | "fires" | "firms" | "fhsz"
-  | "places" | "counties";
+  | "flood" | "places" | "counties";
 export type CountyMetric = "premium" | "violent_per_1k" | "property_per_1k";
 
 export const COUNTY_METRICS: Record<CountyMetric, { label: string; stops: [number, string][]; fmt: (v: number) => string }> = {
@@ -32,6 +32,7 @@ export const LAYER_IDS: Record<LayerKey, string[]> = {
   fires: ["fires-fill", "fires-line"],
   firms: ["firms-heat"],
   fhsz: ["fhsz-fill"],
+  flood: ["flood-fill", "flood-levee-line", "flood200-line"],
   places: ["places-fill", "places-line"],
   arrows: ["arrows-major", "arrows-minor", "arrows-major-infill", "arrows-minor-infill"],
   recommend: ["rec-cells", "rec-zones-line", "rec-labels"],
@@ -176,6 +177,28 @@ export function addDataLayers(map: MlMap, places: GeoJSON.FeatureCollection, wit
       paint: { "line-color": "#ffffff", "line-width": 1, "line-opacity": 0.9 },
     }, before);
   }
+
+  // flood: FEMA flood zones (fill by class) + DWR 200-year floodplain (dashed outline); built by pipeline/14_flood.py
+  map.addSource("flood", { type: "vector", url: DATA.flood });
+  map.addLayer({
+    id: "flood-fill", type: "fill", source: "flood", "source-layer": "flood",
+    paint: {
+      "fill-color": ["match", ["get", "cls"],
+        "floodway", COLORS.flood.floodway, "100yr", COLORS.flood["100yr"], "500yr", COLORS.flood["500yr"],
+        COLORS.flood.levee],
+      "fill-opacity": ["interpolate", ["linear"], ["zoom"], 8, 0.5, 13, 0.4],
+    },
+  }, before);
+  map.addLayer({
+    id: "flood-levee-line", type: "line", source: "flood", "source-layer": "flood",
+    filter: ["==", ["get", "cls"], "levee"],
+    paint: { "line-color": COLORS.floodLeveeLine, "line-width": 0.8, "line-dasharray": [2, 2] },
+  }, before);
+  map.addSource("flood200", { type: "geojson", data: DATA.flood200 });
+  map.addLayer({
+    id: "flood200-line", type: "line", source: "flood200",
+    paint: { "line-color": COLORS.flood200, "line-width": 1.6, "line-dasharray": [3, 2] },
+  }, before);
 
   map.addSource("fhsz", { type: "vector", url: DATA.fhsz });
   map.addLayer({
@@ -357,7 +380,7 @@ export async function setNaip(map: MlMap, year: number, visible: boolean): Promi
   });
   (map.getSource("naip") as unknown as { _vintage: number })._vintage = vintage;
   // imagery sits under all data layers
-  const firstData = ["fhsz-fill", "fires-fill"].find((id) => map.getLayer(id));
+  const firstData = ["flood-fill", "fhsz-fill", "fires-fill"].find((id) => map.getLayer(id));
   map.addLayer({ id: "naip", type: "raster", source: "naip", minzoom: 11 }, firstData);
   return vintage;
 }
