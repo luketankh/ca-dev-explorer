@@ -6,8 +6,8 @@ understand *why* a decision was made, but trust the code where they disagree.
 
 **Open review items.** The final review (turn 27 of `docs/CHAT_HISTORY.md`) lists ranked recommendations.
 Done since: Williamson Act farmland, growth on a fixed scale (plus a multiplicative opportunity score), and no
-backtest look-ahead from undated buildings. Still open, highest first: flood risk (FEMA / 200-year floodplain,
-deliberately deferred), then medium items 5–9 and low items 10–15.
+backtest look-ahead from undated buildings. Flood zones are now shown (14_flood.py) but not scored. Still open, highest first: scoring flood risk
+(FEMA / 200-year floodplain), then medium items 5–9 and low items 10–15.
 
 ## What this is
 
@@ -25,6 +25,8 @@ context, and a ranked "where to build next" recommendation with a backtest.
   - 05–07 fire perimeters / FIRMS / hazard zones · 08 assigns a year to each building
   - 09 per-place stats + scores · 10 PMTiles (`tiler.py`) · 11 insurance + crime
   - 12 growth arrows · 13 where-to-build-next model + backtest (terrain from `terrain.py`)
+  - 14 flood zones (FEMA NFHL + DWR 200-year floodplain): map layer and flood_* shares on places, county and
+    zones. Context only; the score does not use flood yet. Re-run after 09 or 13.
 - `web/`: Vite + React + TypeScript + MapLibre GL + PMTiles. `src/App.tsx` (map, sidebar, popups),
   `src/layers.ts` (all map layers, filters, colours), `src/components/Report.tsx` (right panel),
   `src/config.ts` (years, data URLs, colour ramps), `src/types.ts` (data shapes).
