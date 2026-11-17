@@ -12,10 +12,16 @@ backtest look-ahead from undated buildings. Flood zones are now shown (14_flood.
 ## What this is
 
 A map explorer that helps residential developers decide where to build next in **San Joaquin
-County, CA** (the MVP area; fire, insurance and crime layers already cover all of California).
-It shows how areas developed over time (buildings dated by year built, NAIP imagery 2012–2022), which
-way growth is heading (arrows per cluster of new homes), wildfire exposure, insurance and crime
-context, and a ranked "where to build next" recommendation with a backtest.
+County, CA** (the MVP area; the fire layers already cover all of California).
+It shows how areas developed over time (buildings dated by year built), which way growth is heading
+(arrows per cluster of new homes), wildfire and flood exposure, general plan land use, and a ranked
+"where to build next" recommendation with a backtest.
+
+**Keep the UI uncluttered** (the team's explicit request): the map opens with only buildings, arrows and the
+build-next layer on; legend entries and layer-specific controls (building colours, fire-history window) show only
+while their layer is on; the right-hand report is closed until the user clicks **Where to build next** (bottom
+right). Aerial imagery (NAIP), the statewide insurance/crime county layer and report section, and the steep-ground
+overlay were removed on purpose.
 
 ## Layout
 
@@ -23,16 +29,18 @@ context, and a ranked "where to build next" recommendation with a backtest.
   Shared config (AOI, paths, Overture release, ArcGIS paging helper) is in `pipeline/common.py`.
   - 01 boundaries · 02 Overture buildings · 03 Microsoft 2020 footprints · 04 assessor parcels
   - 05–07 fire perimeters / FIRMS / hazard zones · 08 assigns a year to each building
-  - 09 per-place stats + scores · 10 PMTiles (`tiler.py`) · 11 insurance + crime
+  - 09 per-place stats + scores · 10 PMTiles (`tiler.py`) · 11 insurance + crime (data only; not shown in the app)
   - 12 growth arrows · 13 where-to-build-next model + backtest (terrain from `terrain.py`)
   - 14 flood zones (FEMA NFHL + DWR 200-year floodplain): map layer and flood_* shares on places, county and
     zones. Context only; the score does not use flood yet. Re-run after 09 or 13.
+  - 15 general plan land use: copies `reference/general_plans/general_plans_san_joaquin.geojson` (lightly
+    simplified) to `general_plans.geojson` for the map layer. No download. Context only; not scored.
 - `web/`: Vite + React + TypeScript + MapLibre GL + PMTiles. `src/App.tsx` (map, sidebar, popups),
   `src/layers.ts` (all map layers, filters, colours), `src/components/Report.tsx` (right panel),
   `src/config.ts` (years, data URLs, colour ramps), `src/types.ts` (data shapes).
 - `data/` (git-ignored): raw downloads and intermediate files.
 - `web/public/data/` (git-ignored): what the app loads. Get it with `./fetch_data.sh`
-  (GitHub release `data-v6`) or rebuild with `./run_pipeline.sh`.
+  (GitHub release `data-v7`) or rebuild with `./run_pipeline.sh`.
 
 ## Commands
 
@@ -90,7 +98,7 @@ There is no test suite yet. Verify changes by type-checking, building, and openi
   2020` in the model. Counting them in every year was look-ahead.
 - **Insurance** (HearthMap/NBER, CC BY 4.0, attribution required) is county-level only. **Crime**
   (CA DOJ) is per police agency; Sheriff-patrolled places (incl. Mountain House) share the Sheriff's rate.
-  Railroad police are excluded. Neither is in the opportunity score yet.
+  Railroad police are excluded. Neither is in the opportunity score, and the app no longer shows them.
 
 ## Gotchas
 
@@ -119,8 +127,9 @@ There is no test suite yet. Verify changes by type-checking, building, and openi
 - Keep the UI copy plain and specific, and state data caveats in the app where users see the number.
 - Colours: buildings are hue = type, lightness = age (blue = residential, amber = commercial & industrial,
   grey = other; red `#e34948` = built in the slider year; validated colour-blind safe). Blue also = city growth,
-  orange = fire history, magenta = hazard zones, purple = county comparison, aqua/green = recommendation,
-  brown = steep ground. The old "Buildings shown" filter was replaced by this colour coding.
+  orange = fire history, magenta = hazard zones, cyan = flood zones, aqua/green = recommendation,
+  yellow ramp = planned housing by density, red = planned commercial, violet = planned industrial,
+  pale green = planned agriculture (general plan layer, off by default). The old "Buildings shown" filter was replaced by this colour coding.
 - The before/after swipe-compare view was removed on purpose (buggy; the slider + arrows cover it).
   Predictions should follow the arrows: zones are built from the same clusters, projected 1.5 km ahead
   along each arrow. On average 86% of zone score lies within 60° ahead of the nearest arrow.

@@ -1,7 +1,7 @@
 # General Land Use Plans for California (reference data)
 
-Statewide general-plan land use, standardised to 13 classes. Stored here for a future map
-overlay. **It is not wired into the app yet.**
+Statewide general-plan land use, standardised to 13 classes. The San Joaquin file is shown in the app as
+the "General plan land use" layer (prepared by `pipeline/15_general_plans.py`); it is not in the score yet.
 
 ## Files
 

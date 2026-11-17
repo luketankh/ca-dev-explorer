@@ -8,13 +8,13 @@ import "maplibre-gl/dist/maplibre-gl.css";
 // Bundle MapLibre's module worker (and its shared chunk) so it works in dev and production builds
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 
-import { BASEMAP_STYLE, COLORS, DATA, DEFAULT_PLACE, INITIAL_VIEW, YEAR_MAX, YEAR_MIN } from "./config";
+import { BASEMAP_STYLE, COLORS, DATA, DEFAULT_PLACE, INITIAL_VIEW, YEAR_MAX, YEAR_MIN, PLAN_CLASSES } from "./config";
 import {
-  addDataLayers, applyYear, COUNTY_METRICS, recYearFor, setCountyMetric, setNaip, setVisibility,
-  type CountyMetric, type ExtraData, type FireWindow, type LayerKey, type Visibility,
+  addDataLayers, applyYear, recYearFor, setVisibility,
+  type ExtraData, type FireWindow, type LayerKey, type Visibility,
 } from "./layers";
 import Report from "./components/Report";
-import type { Context, PlaceMetrics, Recommend, Stats } from "./types";
+import type { PlaceMetrics, Recommend, Stats } from "./types";
 
 setWorkerUrl(maplibreWorkerUrl);
 const protocol = new Protocol();
@@ -24,18 +24,16 @@ const esc = (s: unknown) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 const LAYER_LABELS: [LayerKey, string, string][] = [
-  ["naip", "Aerial imagery (NAIP)", "USDA NAIP via Planetary Computer, zoom in to view"],
   ["buildings", "Buildings by type & year built", "Overture Maps + County Assessor + Microsoft 2020"],
   ["arrows", "Growth direction arrows", "Where homes built in the last 5 years went, vs existing homes"],
   ["recommend", "Where to build next (predicted each year)", "Growth momentum × flat open land × next to town × fire risk"],
   ["terrain", "Terrain (shaded relief)", "Elevation tiles: USGS 3DEP via AWS Terrain Tiles"],
-  ["steep", "Steep ground", "Slope from USGS 3DEP 30 m: hillside 15–25%, too steep >25%"],
   ["fires", "Fire perimeters", "CAL FIRE FRAP (all years) + NIFC WFIGS (current season)"],
   ["firms", "Fire detection heatmap", "NASA FIRMS MODIS, 2001–2025"],
   ["fhsz", "Fire Hazard Severity Zones", "CAL FIRE, SRA 2024 / LRA 2025"],
   ["flood", "Flood zones", "FEMA flood maps (2009–2016) + DWR 200-year floodplain"],
+  ["plans", "General plan land use", "City & county general plans, c. 2004–2014 (CA Resources Agency / UC Davis)"],
   ["places", "Cities & growth choropleth", "Census TIGER places"],
-  ["counties", "County comparison (statewide)", "Insurance: HearthMap/NBER · Crime: CA DOJ OpenJustice"],
 ];
 
 function pointInRing([x, y]: number[], ring: number[][]): boolean {
@@ -108,6 +106,17 @@ function floodPopup(f: MapGeoJSONFeature) {
     <div class="pop-id">FEMA National Flood Hazard Layer, San Joaquin County map (effective 2009–2016).</div></div>`;
 }
 
+function planPopup(f: MapGeoJSONFeature) {
+  const p = f.properties as Record<string, string | number>;
+  const cls = PLAN_CLASSES.find(([code]) => code === Number(p.luc));
+  return `<div class="pop"><h4>${esc(cls?.[1] ?? p.luc_name)}</h4><table>
+    <tr><th>Planned use</th><td>${esc(p.luc_name)}</td></tr>
+    <tr><th>Area</th><td>${Number(p.acres).toLocaleString()} acres</td></tr>
+    </table><p class="pop-text">${esc(cls?.[3] ?? "")}</p>
+    <div class="pop-id">General plans of c. 2004–2014, not current zoning. Confirm with the city or county planning
+    department. Source: California Resources Agency / UC Davis.</div></div>`;
+}
+
 function arrowPopup(f: MapGeoJSONFeature) {
   const p = f.properties as Record<string, string | number>;
   const text = p.kind === "infill"
@@ -117,19 +126,6 @@ function arrowPopup(f: MapGeoJSONFeature) {
   return `<div class="pop"><h4>Growth area · ${esc(p.name)}</h4><p class="pop-text">${text}</p>
     <div class="pop-id">One arrow per cluster of new homes. Direction is to scale; length is clamped
     for readability; width grows with the number of homes.</div></div>`;
-}
-
-function countyPopup(f: MapGeoJSONFeature, ctx: Context | null) {
-  const p = f.properties as Record<string, string | number | null>;
-  const n = (v: unknown, d = 1) => (v === null || v === undefined || v === "" ? "–" : Number(v).toFixed(d));
-  const total = ctx?.state.counties ?? 58;
-  return `<div class="pop"><h4>${esc(p.county)} County</h4><table>
-    <tr><th>Home insurance (2024)</th><td>${p.premium ? "$" + Number(p.premium).toLocaleString() + "/yr" : "no data"}
-      ${p.premium_rank ? ` · #${p.premium_rank} of ${ctx?.state.premium_counties ?? 57}` : ""}</td></tr>
-    <tr><th>Violent crime / 1k</th><td>${n(p.violent_per_1k)} · #${esc(p.violent_rank)} of ${total}</td></tr>
-    <tr><th>Property crime / 1k</th><td>${n(p.property_per_1k)} · #${esc(p.property_rank)} of ${total}</td></tr>
-    <tr><th>Crime change 2015–25</th><td>${n(p.crime_change_10yr_pct)}%</td></tr></table>
-    <div class="pop-id">Rank 1 = highest. Crime excludes railroad police.</div></div>`;
 }
 
 function bboxOf(geom: GeoJSON.Geometry): LngLatBounds {
@@ -180,27 +176,28 @@ export default function App() {
   const [year, setYear] = useState(YEAR_MAX - 1); // start on the last complete year
   const [playing, setPlaying] = useState(false);
   const [fireWindow, setFireWindow] = useState<FireWindow>("all");
+  // start uncluttered: buildings, growth arrows and the build-next prediction; everything else is opt-in
   const [vis, setVis] = useState<Visibility>({
-    naip: false, buildings: true, arrows: true, fires: true, firms: false, fhsz: true, flood: false, places: true,
-    counties: true, recommend: true, terrain: true, steep: true,
+    buildings: true, arrows: true, recommend: true,
+    fires: false, firms: false, fhsz: false, flood: false, plans: false, places: false, terrain: false,
   });
   const [recommend, setRecommend] = useState<Recommend | null>(null);
   const [extra, setExtra] = useState<ExtraData | null>(null);
-  const [context, setContext] = useState<Context | null>(null);
-  const [countyMetric, setCountyMetricState] = useState<CountyMetric>("premium");
-  const [naipShown, setNaipShown] = useState<number | null>(null);
-  const [naipError, setNaipError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [zoom, setZoom] = useState(INITIAL_VIEW.zoom);
+  // the recommendations / report panel stays closed until the user asks for it
+  const [showReport, setShowReport] = useState(false);
+
+  // the map fills the freed space when the panel opens or closes
+  useEffect(() => { map.current?.resize(); }, [showReport]);
 
   const places: PlaceMetrics[] = (placesFc?.features ?? []).map((f: GeoJSON.Feature) => f.properties as PlaceMetrics);
 
   // load summary data
   useEffect(() => {
     const get = (u: string) => fetch(u).then((r) => r.json());
-    Promise.all([get(DATA.stats), get(DATA.places), get(DATA.counties), get(DATA.arrows), get(DATA.context),
-      get(DATA.recZones), get(DATA.recommend), get(DATA.steep)]).then(
-      ([s, p, c, a, ctx, rz, rec, steep]) => {
+    Promise.all([get(DATA.stats), get(DATA.places), get(DATA.arrows), get(DATA.recZones), get(DATA.recommend)]).then(
+      ([s, p, a, rz, rec]) => {
         setStats(s);
         // rank labels for every year's zones (the map filters them to the slider year)
         const recLabels: GeoJSON.FeatureCollection = {
@@ -210,11 +207,10 @@ export default function App() {
             geometry: { type: "Point" as const, coordinates: [z.lon, z.lat] },
           }))),
         };
-        setExtra({ counties: c, arrows: a, recZones: rz, recLabels, steep });
+        setExtra({ arrows: a, recZones: rz, recLabels });
         setRecommend(rec);
         fireExponent = (rec as Recommend).fire_exponent ?? fireExponent;
         contractPenalty = (rec as Recommend).contract_penalty ?? contractPenalty;
-        setContext(ctx);
         setPlacesFc(p);
       },
     );
@@ -239,7 +235,7 @@ export default function App() {
 
     const popup = new Popup({ maxWidth: "300px" });
     const clickable = ["buildings-fill", "arrows-minor", "arrows-major", "arrows-minor-infill", "arrows-major-infill",
-      "rec-cells", "fires-fill", "flood-fill", "places-fill", "counties-fill"];
+      "rec-cells", "fires-fill", "flood-fill", "plans-fill", "places-fill"];
     m.on("click", (e) => {
       const feats = m.queryRenderedFeatures(e.point, { layers: clickable.filter((l) => m.getLayer(l)) });
       const hit = (...ids: string[]) => feats.find((f) => ids.includes(f.layer.id));
@@ -248,8 +244,8 @@ export default function App() {
       const recCell = hit("rec-cells");
       const fire = hit("fires-fill");
       const flood = hit("flood-fill");
+      const plan = hit("plans-fill");
       const place = m.getZoom() >= 9.5 ? hit("places-fill") : undefined;
-      const county = hit("counties-fill");
       if (b) popup.setLngLat(e.lngLat).setHTML(buildingPopup(b)).addTo(m);
       else if (arrow) popup.setLngLat(e.lngLat).setHTML(arrowPopup(arrow)).addTo(m);
       else if (recCell) {
@@ -264,8 +260,8 @@ export default function App() {
       }
       else if (fire) popup.setLngLat(e.lngLat).setHTML(firePopup(fire)).addTo(m);
       else if (flood) popup.setLngLat(e.lngLat).setHTML(floodPopup(flood)).addTo(m);
+      else if (plan) popup.setLngLat(e.lngLat).setHTML(planPopup(plan)).addTo(m);
       else if (place) setSelected(String(place.properties.GEOID));
-      else if (county) popup.setLngLat(e.lngLat).setHTML(countyPopup(county, contextRef.current)).addTo(m);
     });
     clickable.forEach((l) => {
       m.on("mouseenter", l, () => (m.getCanvas().style.cursor = "pointer"));
@@ -279,13 +275,6 @@ export default function App() {
 
   const yearRef = useRef(year);
   yearRef.current = year;
-  const contextRef = useRef<Context | null>(null);
-  contextRef.current = context;
-
-  // statewide county comparison metric
-  useEffect(() => {
-    if (ready && map.current) setCountyMetric(map.current, countyMetric);
-  }, [ready, countyMetric]);
 
   // default selection
   useEffect(() => {
@@ -306,17 +295,6 @@ export default function App() {
   useEffect(() => {
     if (ready && map.current) setVisibility(map.current, vis);
   }, [ready, vis]);
-
-  // NAIP imagery follows the slider year
-  useEffect(() => {
-    if (!ready || !map.current) return;
-    setNaip(map.current, year, vis.naip)
-      .then((v) => {
-        setNaipShown(vis.naip ? v : null);
-        setNaipError(null);
-      })
-      .catch((e) => setNaipError(String(e.message ?? e)));
-  }, [ready, year, vis.naip]);
 
   // selected place: highlight + zoom
   const prevSel = useRef<string | null>(null);
@@ -352,7 +330,7 @@ export default function App() {
   const toggle = (k: LayerKey) => setVis((v) => ({ ...v, [k]: !v[k] }));
 
   return (
-    <div className="app">
+    <div className={`app${showReport ? " with-report" : ""}`}>
       <aside className="side">
         <div className="brand">
           <h1>Project Marco Polo</h1>
@@ -371,106 +349,111 @@ export default function App() {
               </span>
             </label>
           ))}
-          {vis.naip && (
-            <div className="note">
-              {naipError ? `Imagery unavailable: ${naipError}` :
-                zoom < 11 ? "Zoom in to see aerial imagery." :
-                naipShown ? `Showing NAIP ${naipShown} (nearest flight at or before ${year}).` : "Loading imagery…"}
-            </div>
-          )}
         </section>
 
-        <section>
-          <h3>Building colors</h3>
-          {([["Residential", COLORS.buildingRamp], ["Commercial & industrial", COLORS.buildingRampCI],
-             ["Other", COLORS.buildingRampOther]] as [string, [number, string][]][]).map(([label, stops]) => (
-            <div key={label} className="type-key">
-              <span className="type-name">{label}</span>
-              <span className="type-ramp" style={{ background: `linear-gradient(90deg, ${stops.map(([, c]) => c).join(",")})` }} />
-            </div>
-          ))}
-          <div className="type-key">
-            <span className="type-name">Built in {year}</span>
-            <span className="type-ramp" style={{ background: COLORS.builtThisYear }} />
-          </div>
-          <div className="caption">Lighter = older, darker = newer (≤1950 → 2025). Type comes from the county
-            assessor parcel; “Other” = agricultural, public, institutional or no parcel match.</div>
-        </section>
-
-        <section>
-          <h3>Fire history shown</h3>
-          <div className="seg">
-            {([["all", "All to date"], ["10y", "Last 10 yrs"], ["year", "Selected year"]] as [FireWindow, string][]).map(
-              ([k, l]) => (
-                <button key={k} className={fireWindow === k ? "on" : ""} onClick={() => setFireWindow(k)}>{l}</button>
-              ),
-            )}
-          </div>
-        </section>
-
-        {vis.counties && (
+        {vis.buildings && (
           <section>
-            <h3>County comparison shows</h3>
-            <div className="seg">
-              {([["premium", "Insurance"], ["violent_per_1k", "Violent crime"], ["property_per_1k", "Property crime"]] as
-                [CountyMetric, string][]).map(([k, l]) => (
-                <button key={k} className={countyMetric === k ? "on" : ""} onClick={() => setCountyMetricState(k)}>{l}</button>
-              ))}
+            <h3>Building colors</h3>
+            {([["Residential", COLORS.buildingRamp], ["Commercial & industrial", COLORS.buildingRampCI],
+               ["Other", COLORS.buildingRampOther]] as [string, [number, string][]][]).map(([label, stops]) => (
+              <div key={label} className="type-key">
+                <span className="type-name">{label}</span>
+                <span className="type-ramp" style={{ background: `linear-gradient(90deg, ${stops.map(([, c]) => c).join(",")})` }} />
+              </div>
+            ))}
+            <div className="type-key">
+              <span className="type-name">Built in {year}</span>
+              <span className="type-ramp" style={{ background: COLORS.builtThisYear }} />
             </div>
-            {zoom > 8.5 && <div className="note">Zoom out to see all counties.</div>}
+            <div className="caption">Lighter = older, darker = newer (≤1950 → 2025). Type comes from the county
+              assessor parcel; “Other” = agricultural, public, institutional or no parcel match.</div>
           </section>
         )}
 
+        {vis.fires && (
+          <section>
+            <h3>Fire history shown</h3>
+            <div className="seg">
+              {([["all", "All to date"], ["10y", "Last 10 yrs"], ["year", "Selected year"]] as [FireWindow, string][]).map(
+                ([k, l]) => (
+                  <button key={k} className={fireWindow === k ? "on" : ""} onClick={() => setFireWindow(k)}>{l}</button>
+                ),
+              )}
+            </div>
+          </section>
+        )}
 
-        <section className="legend">
-          <h3>Legend</h3>
-          <div className="legend-title">Buildings</div>
-          <div className="caption" style={{ marginTop: 0 }}>Colored by type and age; see “Building colors” above.</div>
-          <div className="legend-title">Fire perimeters</div>
-          <div className="ramp" style={{ background: `linear-gradient(90deg, ${COLORS.fireOld}, ${COLORS.fireRecent})` }} />
-          <div className="ramp-labels"><span>Older</span><span>Recent</span></div>
-          <div className="legend-title">Fire Hazard Severity Zones</div>
-          {Object.entries(COLORS.hazard).map(([k, c]) => (
-            <div key={k} className="sw"><i style={{ background: c }} />{k}</div>
-          ))}
-          <div className="legend-title">Flood zones</div>
-          {(["floodway", "100yr", "500yr", "levee"] as const).map((k) => (
-            <div key={k} className="sw"><i style={{
-              background: COLORS.flood[k],
-              ...(k === "levee" ? { border: `1px dashed ${COLORS.floodLeveeLine}` } : {}),
-            }} />{FLOOD_LABEL[k]}</div>
-          ))}
-          <div className="sw"><i style={{ border: `2px dashed ${COLORS.flood200}`, background: "transparent" }} />DWR 200-year floodplain</div>
-          <div className="legend-title">Cities: 10-yr residential growth</div>
-          <div className="ramp" style={{
-            background: `linear-gradient(90deg, ${COLORS.growthRamp.map(([, c]) => c).join(",")})`,
-          }} />
-          <div className="ramp-labels"><span>0%</span><span>10%</span><span>25%</span><span>60%+</span></div>
-          <div className="legend-title">Growth direction</div>
-          <div className="sw"><i className="arrow-sw" />New homes (last 5 yrs) vs existing</div>
-          <div className="legend-title">Where to build next: suitability</div>
-          <div className="ramp" style={{
-            background: `linear-gradient(90deg, ${COLORS.suitRamp.map(([, c]) => c).join(",")})`,
-          }} />
-          <div className="ramp-labels"><span>Low</span><span>Medium</span><span>High</span></div>
-          <div className="sw"><i style={{ border: `2px dashed ${COLORS.suitDark}`, background: "transparent" }} />Ranked zone (number = rank)</div>
-          <div className="legend-title">Steep ground (slope)</div>
-          <div className="sw"><i style={{ background: COLORS.hillside }} />Hillside 15–25%: costly to build</div>
-          <div className="sw"><i style={{ background: COLORS.steep }} />Over 25%: generally not buildable</div>
-          {vis.counties && (
-            <>
-              <div className="legend-title">Counties: {COUNTY_METRICS[countyMetric].label}</div>
-              <div className="ramp" style={{
-                background: `linear-gradient(90deg, ${COUNTY_METRICS[countyMetric].stops.map(([, c]) => c).join(",")})`,
-              }} />
-              <div className="ramp-labels">
-                {COUNTY_METRICS[countyMetric].stops.filter((_, i) => i % 2 === 0).map(([v]) => (
-                  <span key={v}>{COUNTY_METRICS[countyMetric].fmt(v)}</span>
+        {(vis.buildings || vis.fires || vis.fhsz || vis.flood || vis.plans || vis.places || vis.arrows || vis.recommend) && (
+          <section className="legend">
+            <h3>Legend</h3>
+            {vis.buildings && (
+              <>
+                <div className="legend-title">Buildings</div>
+                <div className="caption" style={{ marginTop: 0 }}>Colored by type and age; see “Building colors” above.</div>
+              </>
+            )}
+            {vis.fires && (
+              <>
+                <div className="legend-title">Fire perimeters</div>
+                <div className="ramp" style={{ background: `linear-gradient(90deg, ${COLORS.fireOld}, ${COLORS.fireRecent})` }} />
+                <div className="ramp-labels"><span>Older</span><span>Recent</span></div>
+              </>
+            )}
+            {vis.fhsz && (
+              <>
+                <div className="legend-title">Fire Hazard Severity Zones</div>
+                {Object.entries(COLORS.hazard).map(([k, c]) => (
+                  <div key={k} className="sw"><i style={{ background: c }} />{k}</div>
                 ))}
-              </div>
-            </>
-          )}
-        </section>
+              </>
+            )}
+            {vis.flood && (
+              <>
+                <div className="legend-title">Flood zones</div>
+                {(["floodway", "100yr", "500yr", "levee"] as const).map((k) => (
+                  <div key={k} className="sw"><i style={{
+                    background: COLORS.flood[k],
+                    ...(k === "levee" ? { border: `1px dashed ${COLORS.floodLeveeLine}` } : {}),
+                  }} />{FLOOD_LABEL[k]}</div>
+                ))}
+                <div className="sw"><i style={{ border: `2px dashed ${COLORS.flood200}`, background: "transparent" }} />DWR 200-year floodplain</div>
+              </>
+            )}
+            {vis.plans && (
+              <>
+                <div className="legend-title">General plan land use (c. 2004–2014)</div>
+                {PLAN_CLASSES.filter(([code]) => code !== 9 && code !== -1).map(([code, label, color]) => (
+                  <div key={code} className="sw"><i style={{ background: color }} />{label}</div>
+                ))}
+              </>
+            )}
+            {vis.places && (
+              <>
+                <div className="legend-title">Cities: 10-yr residential growth</div>
+                <div className="ramp" style={{
+                  background: `linear-gradient(90deg, ${COLORS.growthRamp.map(([, c]) => c).join(",")})`,
+                }} />
+                <div className="ramp-labels"><span>0%</span><span>10%</span><span>25%</span><span>60%+</span></div>
+              </>
+            )}
+            {vis.arrows && (
+              <>
+                <div className="legend-title">Growth direction</div>
+                <div className="sw"><i className="arrow-sw" />New homes (last 5 yrs) vs existing</div>
+              </>
+            )}
+            {vis.recommend && (
+              <>
+                <div className="legend-title">Where to build next: suitability</div>
+                <div className="ramp" style={{
+                  background: `linear-gradient(90deg, ${COLORS.suitRamp.map(([, c]) => c).join(",")})`,
+                }} />
+                <div className="ramp-labels"><span>Low</span><span>Medium</span><span>High</span></div>
+                <div className="sw"><i style={{ border: `2px dashed ${COLORS.suitDark}`, background: "transparent" }} />Ranked zone (number = rank)</div>
+              </>
+            )}
+          </section>
+        )}
       </aside>
 
       <main className="mapwrap">
@@ -491,10 +474,14 @@ export default function App() {
             ))}
           </div>
         </div>
+        <button className={`report-toggle${showReport ? " on" : ""}`} onClick={() => setShowReport((v) => !v)}
+          aria-expanded={showReport} aria-controls="report">
+          {showReport ? "Hide recommendations" : "Where to build next"}
+        </button>
       </main>
 
-      {stats && (
-        <Report stats={stats} places={places} selected={selected} year={year} context={context}
+      {stats && showReport && (
+        <Report stats={stats} places={places} selected={selected} year={year}
           arrows={extra?.arrows ?? null} recommend={recommend}
           onZone={(lon, lat) => map.current?.flyTo({ center: [lon, lat], zoom: 12.5, duration: 1200 })}
           onSelect={setSelected} onPickYear={(y) => { setPlaying(false); setYear(y); }} />

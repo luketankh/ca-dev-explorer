@@ -43,42 +43,6 @@ export interface PlaceMetrics {
   rank: number | null;
 }
 
-export interface PlaceContext {
-  crime_agency: string;
-  crime_coverage: "own" | "sheriff";
-  crime_pop: number;
-  violent_per_1k: number;
-  property_per_1k: number;
-  pop_2025: number | null;
-}
-
-export interface Context {
-  crime_year: number;
-  insurance_year: number;
-  state: {
-    premium_median: number;
-    premium_mean: number;
-    premium_counties: number;
-    violent_per_1k: number;
-    property_per_1k: number;
-    counties: number;
-  };
-  county: {
-    county: string;
-    premium: number | null;
-    median_home_value: number | null;
-    premium_pct_of_home_value: number | null;
-    premium_rank: number | null;
-    violent_per_1k: number;
-    property_per_1k: number;
-    violent_rank: number;
-    property_rank: number;
-    crime_change_10yr_pct: number | null;
-    pop_2025: number;
-  };
-  places: Record<string, PlaceContext>;
-}
-
 export interface RecZone {
   rank: number;
   label: string;
