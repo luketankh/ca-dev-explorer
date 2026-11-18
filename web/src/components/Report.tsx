@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { PlaceMetrics, Recommend, Stats } from "../types";
+import { useEffect, useState } from "react";
+import type { PlaceMetrics, RecZone, Recommend, Stats } from "../types";
 import BuiltChart from "./BuiltChart";
 import { recYearFor } from "../layers";
 
@@ -12,8 +12,37 @@ interface Props {
   recommend: Recommend | null;
   onSelect: (geoid: string | null) => void;
   onPickYear: (y: number) => void;
-  onZone: (lon: number, lat: number) => void;
+  /** Rank of the highlighted zone in this year's prediction, if any. */
+  selectedZone: number | null;
+  /** With a region selected: its own zone ranking, or the county top 10. */
+  zoneScope: "region" | "county";
+  onZoneScope: (s: "region" | "county") => void;
+  onZone: (zone: RecZone, year: number) => void;
 }
+
+const KIND_LABEL: Record<string, string> = {
+  City: "Incorporated city", CDP: "Community (census-designated place)",
+  Area: "Area (Census county division)", Rural: "Rural land outside the towns",
+};
+
+/** [layer, what it covers (area, years), known gaps] for the Data coverage table. */
+const COVERAGE: [string, string, string][] = [
+  ["Buildings", "Every building footprint in the county (Overture 2026, Microsoft 2020)",
+    "Year built from the county assessor for ~90%; 8% (mostly rural) undated before 2020 (grey). 2016–2022 matches state housing estimates within ~5% county-wide; 2023 onwards is far from complete (about a third of new homes so far). Only ~47% of commercial/industrial buildings have a year"],
+  ["Growth arrows", "Every year 2000–2026: clusters of homes built in the 5 years to the slider year",
+    "Residential only. Needs 20+ new homes close together, so quiet towns and scattered rural building get none"],
+  ["Build next (green cells, zones)", "A prediction for every year 2000–2025 (2026 shows 2025), whole county, 500 m cells",
+    "Cells only show where they score 5+; they need recent home building nearby. Delta Primary Zone and water excluded"],
+  ["Fire history", "CAL FIRE perimeters, all years on record (fires 10+ acres), plus this season; NASA satellite detections 2001–2025",
+    "Small fires under 10 acres are missing from the perimeter record"],
+  ["Fire hazard zones", "CAL FIRE 2024 (state areas) / 2025 (local areas)", "Today's map, also used for past years"],
+  ["Flood", "FEMA flood maps (effective 2009–2016) and DWR 200-year floodplain", "Shown, not scored. Older maps; levee status can change"],
+  ["Utilities", "Power lines 60 kV+, gas transmission pipelines, community water systems, city and county sewer",
+    "Today's boundaries, used for past years too. No local distribution lines or pipe capacity"],
+  ["Land use", "City and county general plans, c. 2004–2014", "Not current zoning; shown, not scored"],
+  ["Terrain", "USGS 3DEP elevation (slope at 25 m)", "None significant"],
+  ["Regions", "County, 9 Census county divisions, 8 cities, 20 communities, rural land", "Nothing below town level yet"],
+];
 
 const fmt = (v: number | null | undefined, digits = 0) =>
   v === null || v === undefined ? "–" : v.toLocaleString(undefined, { maximumFractionDigits: digits });
@@ -29,20 +58,74 @@ function Kpi({ label, value, note }: { label: string; value: string; note?: stri
   );
 }
 
+/** Score factors in display order: [key, short label, what 100 means]. */
+const FACTORS: [string, string, string][] = [
+  ["momentum", "Grow", "Right in the path of recent home building"],
+  ["open_land", "Open", "Mostly unbuilt land"],
+  ["flat", "Flat", "Slope under 15%"],
+  ["next_to_town", "Town", "Within 1 km of built-up land"],
+  ["farmland", "Farm", "No Williamson Act contract"],
+  ["water_sewer", "W/S", "Water and sewer service within 500 m"],
+  ["usable_land", "Ease", "No power/gas easements, water or canal right-of-way"],
+  ["land_use", "Plan", "Not planned for industry"],
+  ["fire", "Fire", "No wildfire risk"],
+];
+
+const FULL_NAME: Record<string, string> = {
+  momentum: "Growth momentum", open_land: "Open land", flat: "Flat ground", next_to_town: "Next to town",
+  farmland: "Farmland contracts", water_sewer: "Water & sewer", usable_land: "Easements & canals",
+  land_use: "General plan", fire: "Fire risk",
+};
+
+/** One small heat-coloured cell per factor, 0-100 (100 = no penalty). */
+function FactorStrip({ f }: { f: Record<string, number> }) {
+  return (
+    <div className="factors" aria-label="Score factors, 0 to 100">
+      {FACTORS.map(([k, label, full]) => {
+        const v = f[k] ?? 0;
+        return (
+          <span key={k} className="factor" title={`${FULL_NAME[k]}: ${v}/100. 100 = ${full}.`}>
+            <span className="factor-val" style={{ background: `hsl(${Math.round(v * 1.2)}, 55%, ${92 - v * 0.12}%)` }}>{v}</span>
+            <span className="factor-lab">{label}</span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Plain-words water/sewer access for a zone (0-1 averages over its cells). */
+const utilityNote = (water: number, sewer: number) => {
+  const say = (v: number, what: string) => (v >= 0.9 ? `${what} nearby` : v <= 0.1 ? `no ${what} within 3 km` : `${what} partly nearby`);
+  return water >= 0.9 && sewer >= 0.9 ? "water & sewer nearby" : `${say(water, "water")}, ${say(sewer, "sewer")}`;
+};
+
 /** Share in FEMA's 100-year floodplain, floodway included (the pipeline stores them as separate classes). */
 const fema100 = (a: { flood_100yr_share?: number; flood_floodway_share?: number }) =>
   (a.flood_100yr_share ?? 0) + (a.flood_floodway_share ?? 0);
 
 export default function Report({ stats, places, selected, year, arrows, recommend, onSelect, onPickYear,
-  onZone }: Props) {
+  selectedZone, zoneScope, onZoneScope, onZone }: Props) {
   const [chartUse, setChartUse] = useState<"res" | "ci">("res");
+  // bring the picked zone's row into view (e.g. after clicking the zone on the map)
+  useEffect(() => {
+    if (selectedZone !== null) {
+      document.querySelector(`tr[data-zone="${selectedZone}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, [selectedZone]);
   const recYear = recYearFor(year);
   const rec = recommend?.by_year[String(recYear)];
   const ranked = [...places]
-    .filter((p) => p.opportunity_score !== null)
+    .filter((p) => (p.kind === "City" || p.kind === "CDP") && p.opportunity_score !== null)
     .sort((a, b) => (b.opportunity_score ?? 0) - (a.opportunity_score ?? 0));
   const p = places.find((x) => x.GEOID === selected);
+  // the county division a town or rural remainder belongs to
+  const parent = p?.area ? places.find((x) => x.GEOID === p.area && x.kind === "Area") : undefined;
+  const isTown = p?.kind === "City" || p?.kind === "CDP";
   const area = p ?? { ...stats.county, name: stats.county.name };
+  // a selected region shows its own ranking (cells within 1.5 km of it, ranked locally) or the county top 10
+  const regionMode = !!p && zoneScope === "region";
+  const zones = rec ? (regionMode ? rec.regional?.[p!.GEOID] ?? [] : rec.zones) : [];
   const series = p ? stats.places[p.GEOID] : stats.county;
   const builtToYear =
     series.before + series.yearly.reduce((s, v, i) => (stats.years[i] <= year ? s + v : s), 0);
@@ -53,18 +136,28 @@ export default function Report({ stats, places, selected, year, arrows, recommen
   // growth areas (clusters of new homes) in this place, or the largest ones county-wide
   const growth = (arrows?.features ?? [])
     .map((f) => f.properties as GrowthArea & { year: number; GEOID: string | null })
-    .filter((g) => g.year === year && (p ? g.GEOID === p.GEOID : true))
+    .filter((g) => g.year === year && (!p ? true
+      : p.kind === "Area" ? places.some((t) => t.GEOID === g.GEOID && t.area === p.GEOID)
+        : g.GEOID === p.GEOID))
     .sort((a, b) => b.new_homes - a.new_homes);
   const growthShown = growth.slice(0, p ? 6 : 5);
+  // homes built in the 5 years to the slider year (explains a missing arrow)
+  const homesWindow = series.yearly.reduce((t, v, i) => (stats.years[i] > year - 5 && stats.years[i] <= year ? t + v : t), 0);
 
   return (
-    <aside className="report" id="report">
+    <div className="report-body">
       <header className="report-head">
-        {p && <button className="link" onClick={() => onSelect(null)}>← San Joaquin County</button>}
+        {p && (
+          <nav className="crumbs" aria-label="Region">
+            <button className="link" onClick={() => onSelect(null)}>San Joaquin County</button>
+            {parent && parent.GEOID !== p.GEOID && <> › <button className="link" onClick={() => onSelect(parent.GEOID)}>{parent.name}</button></>}
+          </nav>
+        )}
         <h2>{area.name}</h2>
         <div className="sub">
-          {p ? (p.kind === "City" ? "Incorporated city" : "Census-designated place") : "MVP study area"}
+          {p ? KIND_LABEL[p.kind] : "MVP study area: 9 areas, 8 cities, 20 communities and the rural land between them"}
           {p?.rank ? ` · Opportunity rank #${p.rank} of ${ranked.length}` : ""}
+          {p?.kind === "Area" && p.towns ? ` · Towns: ${p.towns}` : ""}
         </div>
       </header>
 
@@ -85,34 +178,64 @@ export default function Report({ stats, places, selected, year, arrows, recommen
               {!rec.next.complete && " This period isn't over yet, and recent assessor records are incomplete, so treat this as early."}
             </div>
           )}
-          <table className="rank rec">
+          {p && (
+            <div className="seg zone-scope" role="tablist" aria-label="Zone ranking">
+              <button role="tab" aria-selected={regionMode} className={regionMode ? "on" : ""}
+                onClick={() => onZoneScope("region")}>Best in {p.name}</button>
+              <button role="tab" aria-selected={!regionMode} className={!regionMode ? "on" : ""}
+                onClick={() => onZoneScope("county")}>County top 10</button>
+            </div>
+          )}
+          {regionMode && (
+            <div className="caption">
+              {zones.length
+                ? `${p!.name}'s best ${zones.length === 1 ? "zone" : `${zones.length} zones`} in ${recYear}, ranked within ${p!.name}${isTown
+                  ? ` and up to ${((recommend.utilities?.region_buffer_m ?? 1500) / 1000).toFixed(1)} km around it` : ""}. “County #” is the zone's place in the county top 10, if it made it.`
+                : `No green cells or zones in or around ${p!.name} in ${recYear}. Cells only score (and show) where homes were
+                   built nearby in ${rec.window}: the model extends recent growth, so places with little new building get no score,
+                   even if the land itself is fine. Constraints (farmland contracts, steep ground, power-line easements, no water or sewer nearby, fire risk) can also
+                   push scores below the cut-off.`}
+            </div>
+          )}
+          {zones.length > 0 && <div className="caption">Under each zone: its score factors from 0 to 100 (100 = no
+            penalty; hover for what each means): Grow = growth momentum, Open = open land, Flat = flat ground, Town = next
+            to town, Farm = farmland contracts, W/S = water & sewer, Ease = easements & canals, Plan = general plan,
+            Fire = fire risk. The score multiplies them, so one low factor pulls a zone down.</div>}
+          {zones.length > 0 && <table className="rank rec">
             <thead>
-              <tr><th>#</th><th>Zone</th><th className="num">Open acres</th><th className="num">Momentum</th><th className="num">Fire risk</th></tr>
+              <tr><th>#</th><th>Zone</th><th className="num">Open acres</th><th className="num" title="Average cell score, 0-100">Score</th></tr>
             </thead>
             <tbody>
-              {rec.zones.map((z) => (
-                <tr key={z.rank} className={p && z.place === p.name ? "sel" : ""} onClick={() => onZone(z.lon, z.lat)}>
+              {zones.map((z) => (
+                <tr key={z.rank} data-zone={z.rank} className={z.rank === selectedZone ? "sel" : ""} onClick={() => onZone(z, recYear)}
+                  aria-selected={z.rank === selectedZone}>
                   <td><span className="rec-rank">{z.rank}</span></td>
                   <td>{z.label}
+                    {regionMode && (z.county_rank
+                      ? <span className="county-rank">County #{Math.round(z.county_rank)}</span>
+                      : <span className="county-rank muted">Not in county top 10</span>)}
                     <div className="kpi-note">Avg slope {fmt(z.slope_mean, 1)}% · {pct(z.flat_share)} flat
                       {z.fhsz !== "None" ? ` · Hazard zone: ${z.fhsz}` : ""}
                       {z.contract_share >= 0.05 ? ` · ${pct(z.contract_share)} under farmland contract` : ""}
                       {z.contract_ending_share >= 0.05 ? ` · ${pct(z.contract_ending_share)} contract ending` : ""}
                       {fema100(z) >= 0.05 ? ` · ${pct(fema100(z))} in 100-yr floodplain` : ""}
                       {(z.flood_levee_share ?? 0) >= 0.05 ? ` · ${pct(z.flood_levee_share)} levee-protected` : ""}
-                      {(z.flood_200yr_share ?? 0) >= 0.05 ? ` · ${pct(z.flood_200yr_share)} in 200-yr floodplain` : ""}</div></td>
+                      {(z.flood_200yr_share ?? 0) >= 0.05 ? ` · ${pct(z.flood_200yr_share)} in 200-yr floodplain` : ""}
+                      {(z.easement_share ?? 0) >= 0.02 ? ` · ${pct(z.easement_share)} in power/gas easements` : ""}
+                      {z.water_access !== undefined ? ` · ${utilityNote(z.water_access, z.sewer_access ?? 0)}` : ""}
+                      {(z.plan_nonres_share ?? 0) >= 0.05 ? ` · ${pct(z.plan_nonres_share)} planned industrial` : ""}</div>
+                    {z.factors && <FactorStrip f={z.factors} />}</td>
                   <td className="num">{fmt(z.acres)}</td>
-                  <td className="num">{pct(z.momentum)}</td>
-                  <td className="num">{pct(z.fire_risk)}</td>
+                  <td className="num"><b>{fmt(z.score_sum / Math.max(z.cells, 1))}</b></td>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table>}
           <details className="method">
             <summary>How this is calculated, and how well it worked in the past</summary>
             <p>The county is cut into {recommend.cell_m} m cells. Each cell scores
               <b> 100 × growth momentum × open land × flat share × next to town × (1 − {recommend.contract_penalty} × farmland
-              contract) × (1 − fire risk)<sup>{recommend.fire_exponent}</sup></b>.
+              contract) × water &amp; sewer × usable land × land use × (1 − fire risk)<sup>{recommend.fire_exponent}</sup></b>.
               The fire penalty grows faster than the risk: a cell keeps{" "}
               {[0.1, 0.25, 0.5].map((r) => `${Math.round((1 - r) ** recommend.fire_exponent * 100)}% of its score at ${r * 100}% risk`).join(", ")},
               and nothing at maximum risk.</p>
@@ -128,6 +251,16 @@ export default function Report({ stats, places, selected, year, arrows, recommen
                 contract (county assessor), which blocks development while it runs. Each year only counts contracts
                 signed by then. A contract in non-renewal that ends within 5 years counts as ending, not as
                 protected. Contracts that ended before today's records aren't in the data, so past years miss some.</li>
+              <li><b>Usable land:</b> land inside power-line and gas-pipeline easements or setbacks (15–75 m either side,
+                wider for higher voltage), water, or a 30 m right-of-way along canals and the Aqueduct doesn't count.</li>
+              <li><b>Land use:</b> land the general plans (c. 2004–2014) reserve for industry loses 80% of its score.
+                Commercial, open space and farmland designations aren't penalised: housing has often been built on them.</li>
+              <li><b>Water and sewer:</b> a cell inside or within{" "}
+                {recommend.utilities?.full_m ?? 500} m of a community water system and of sewer service keeps its full
+                score; access fades to nothing at {((recommend.utilities?.zero_m ?? 3000) / 1000).toFixed(0)} km, where a
+                cell keeps {Math.round((recommend.utilities?.service_floor ?? 0.5) * 100)}%. Service areas are today's
+                boundaries, which past years couldn't know, so the backtest also shows the model without them.
+                Pipe capacity isn't public, so it isn't included.</li>
               <li><b>Fire risk:</b> {recommend.fire_method} History and detections use a 5 km ring around each
                 cell, and the backtest only uses fires known at the time.</li>
               <li><b>Excluded:</b> the Delta Primary Zone (Delta Protection Act; {fmt(recommend.excluded.delta_primary_zone_cells)} cells),
@@ -138,19 +271,21 @@ export default function Report({ stats, places, selected, year, arrows, recommen
               only count as built from {recommend.undated_from}, when satellite footprints confirm them. The hazard
               zones (2024) and terrain are today's maps.</p>
             <table className="rank">
-              <thead><tr><th>As of</th><th>Homes built</th><th className="num">Model</th><th className="num">Edge-of-town rule</th><th className="num">Random</th></tr></thead>
+              <thead><tr><th>As of</th><th>Homes built</th><th className="num">Model</th><th className="num">No water &amp; sewer</th><th className="num">Edge-of-town rule</th><th className="num">Random</th></tr></thead>
               <tbody>
                 {recommend.backtest.map((t) => (
                   <tr key={t.as_of}>
                     <td>{t.as_of}</td><td>{t.predicts}: {fmt(t.homes_built)}</td>
-                    <td className="num"><b>{t.captured_pct}%</b></td><td className="num">{t.baseline_pct}%</td>
+                    <td className="num"><b>{t.captured_pct}%</b></td>
+                    <td className="num">{t.no_utilities_pct === undefined ? "–" : `${t.no_utilities_pct}%`}</td>
+                    <td className="num">{t.baseline_pct}%</td>
                     <td className="num">{t.top_area_pct}%</td>
                   </tr>
                 ))}
               </tbody>
             </table>
             <p>Flood zones are shown on the map and next to each zone, but are not part of the score yet.
-              Not yet included: zoning and general plans, sewer/water capacity, land prices and ownership.
+              Not yet included: zoning and general plans, sewer/water plant capacity, land prices and ownership.
               Treat zones as places to investigate, not approvals.</p>
           </details>
         </section>
@@ -180,8 +315,8 @@ export default function Report({ stats, places, selected, year, arrows, recommen
         </div>
         <BuiltChart years={stats.years} values={chartUse === "res" ? series.yearly : series.yearly_ci_sqft}
           unit={chartUse === "res" ? "homes built" : "sq ft of footprint built"} selectedYear={year} onPickYear={onPickYear} />
-        <div className="caption">Click a bar to jump the map to that year. The most recent 1–2 years
-          may be incomplete in assessor records{chartUse === "ci" ? "; many commercial buildings have no year at all" : ""}.</div>
+        <div className="caption">Click a bar to jump the map to that year. 2023 onwards is far
+          from complete in assessor records (about a third of the homes the state counts), so recent bars and growth read low{chartUse === "ci" ? "; many commercial buildings have no year at all" : ""}.</div>
         <div className="chart-title">
           Growth areas, {year - 4}–{year}
           {growth.length > 0 && <span className="muted"> · {growth.length} cluster{growth.length > 1 ? "s" : ""}
@@ -202,7 +337,10 @@ export default function Report({ stats, places, selected, year, arrows, recommen
             ))}
           </ul>
         ) : (
-          <div className="caption">No cluster of 20+ new homes in the 5 years to {year}.</div>
+          <div className="caption">
+            No growth arrow: {fmt(homesWindow)} home{homesWindow === 1 ? "" : "s"} built {p ? "here" : "in the county"} in{" "}
+            {year - 4}–{year}. An arrow needs a cluster of 20+ new homes close together (within ~350 m of each other).
+          </div>
         )}
       </section>
 
@@ -294,6 +432,22 @@ export default function Report({ stats, places, selected, year, arrows, recommen
           <p><b>Opportunity:</b> {stats.method.opportunity}.</p>
         </details>
       </section>
-    </aside>
+      <section>
+        <details className="method">
+          <summary>Data coverage: what we have and what we don't</summary>
+          <table className="rank coverage">
+            <thead><tr><th>Layer</th><th>Covers</th><th>Gaps</th></tr></thead>
+            <tbody>
+              {COVERAGE.map(([layer, covers, gaps]) => (
+                <tr key={layer}><td><b>{layer}</b></td><td>{covers}</td><td>{gaps}</td></tr>
+              ))}
+            </tbody>
+          </table>
+          <p><b>Not in the data at all:</b> current zoning, land prices and sales, parcel ownership (left out on purpose),
+            approved but unbuilt subdivisions, sewer and water plant capacity, local power and gas distribution lines,
+            schools, jobs and commute times, and anything below town level (no neighbourhoods or Census tracts yet).</p>
+        </details>
+      </section>
+    </div>
   );
 }

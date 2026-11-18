@@ -14,13 +14,21 @@ The county is cut into 500 m x 500 m cells. For a reference year Y each cell get
                    + 0.3 x fire history within 5 km: frequency, repeat burning and time since the
                          last fire, every fire weighted by age (half-life 10 years; fire_history.py)
                    + 0.2 x wildland satellite fire detections within 5 km, age-weighted the same way
+  utilities   0-1  (1 - easement share) x (SERVICE_FLOOR + (1 - SERVICE_FLOOR) x service), from 16_utilities.py.
+                   Easement share = land inside power-line / gas-pipeline easements and setbacks (can't hold
+                   homes). Service = average of water and sewer access: 1 inside or within 500 m of a community
+                   water system / sewer service area, falling to 0 at 3 km (extending mains is costly and slow).
+                   Service areas are today's boundaries, so past years see a little of the future; the
+                   backtest is reported with and without utilities.
   excluded         Delta Primary Zone (Delta Protection Act), cells > 40% water, outside county.
 
-  suitability = 100 x momentum x room x flat share x adjacency x (1 - fire risk) ** FIRE_EXPONENT
+  suitability = 100 x momentum x room x flat share x adjacency x farmland x utilities
+                x (1 - fire risk) ** FIRE_EXPONENT
   (FIRE_EXPONENT = 2: progressive penalty; a cell keeps 81% of its score at 10% fire risk, 56% at 25%,
    25% at 50% and 0% at maximum risk. Higher exponent = harsher.)
 
-Adjacent high-scoring cells are merged into ranked "zones". A backtest re-runs the model as of
+Adjacent high-scoring cells are merged into ranked "zones": a county-wide top 10, plus each city's and
+community's own top zones (within REGION_BUFFER_M of its boundary), so every region has a local ranking. A backtest re-runs the model as of
 earlier years and measures how many homes built in the following 5 years landed in the cells it
 ranked highest.
 
@@ -28,6 +36,7 @@ Outputs (web/public/data): recommend_cells.pmtiles (cells for every year), recom
 (top-10 zones per year), recommend.json (zones by year, what happened next, backtest)
 """
 import math
+import os
 
 import duckdb
 import geopandas as gpd
@@ -37,7 +46,7 @@ import shapely
 from sklearn.cluster import DBSCAN
 from sklearn.neighbors import NearestNeighbors
 
-from common import AOI_BBOX, OVERTURE_RELEASE, PROCESSED, RAW, WEB_DATA, arcgis_query, write_geojson, write_json
+from common import ROOT, AOI_BBOX, OVERTURE_RELEASE, PROCESSED, RAW, WEB_DATA, arcgis_query, write_geojson, write_json
 from fire_history import HALF_LIFE, METHOD as FIRE_METHOD, GridHistory, risk as fire_risk
 from terrain import RES as DEM_RES, SLOPE_MAX, SLOPE_OK, cell_terrain, load_dem_slope
 
@@ -48,6 +57,20 @@ WINDOW = 5
 FIRE_EXPONENT = 2  # fire factor = (1 - fire risk) ** FIRE_EXPONENT; higher = harsher
 UNDATED_FROM = 2020  # first year undated buildings are known to exist (Microsoft 2019-20 footprints)
 CONTRACT_PENALTY = 0.8  # farmland factor = 1 - CONTRACT_PENALTY x share of the cell under contract
+SERVICE_FLOOR = 0.5  # utilities: a cell far from water and sewer keeps this share of its score
+SERVICE_FULL_M, SERVICE_ZERO_M = 500, 3000  # water/sewer access: 1 within 500 m, 0 beyond 3 km
+# land use (general plans, c. 2004-2014): land planned for industry, commerce or open space rarely becomes housing
+PLAN_PENALTY = {  # share of score lost on land a general plan reserves for each use (0 = no penalty)
+    "industrial": float(os.environ.get("IND_PENALTY", 0.8)),
+    "open": float(os.environ.get("OPEN_PENALTY", 0.0)),      # open space and public lands (parks in new tracts)
+    "commercial": float(os.environ.get("COMM_PENALTY", 0.0)),  # often mixed into new neighbourhoods
+    "ag": float(os.environ.get("AG_PENALTY", 0.0)),            # much new housing is built on farmland
+}
+CI_COVERAGE = float(os.environ.get("CI_COVERAGE", 3.0))     # a warehouse's lot (paving, yards) ~3x its roof
+CANAL_SETBACK_M = float(os.environ.get("CANAL_SETBACK_M", 30))  # canal / aqueduct right-of-way either side
+PLAN_GROUPS = {1: "ag", 2: "industrial", 3: "commercial", 4: "commercial", 8: "open"}  # the rest: housing-friendly
+REGION_BUFFER_M = 1500  # a region's own zones: cells within this distance of its boundary
+REGION_TOP = 5
 AHEAD_M, SIGMA_M = 1500, 1200
 COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 DELTA_URL = "https://gis.water.ca.gov/arcgis/rest/services/Boundaries/i03_Delta_PrimarySecondary_Zones/FeatureServer/0"
@@ -124,6 +147,51 @@ cells["too_steep"] = cells["terrain"] < 0.2
 print(f"  {int(cells['too_steep'].sum()):,} cells too steep (<20% of land under {SLOPE_OK:.0f}% slope)")
 
 excluded = cells["in_primary_zone"] | (cells["water_frac"] > 0.4) | cells["too_steep"]
+
+# --- utilities (16_utilities.py): easements cost land; water and sewer nearby make hook-up cheap -------
+print("Utilities ...")
+_need = [PROCESSED / f for f in ("utility_easements.parquet", "water_service.parquet", "sewer_service.parquet")]
+if not all(f.exists() for f in _need):
+    raise SystemExit("Run 16_utilities.py first (it prepares the utility data this step reads).")
+ease = gpd.read_parquet(_need[0]).to_crs(ALBERS)
+ei = gpd.overlay(cells[["geometry"]].reset_index(), gpd.GeoDataFrame(geometry=[ease.geometry.union_all()], crs=ALBERS),
+                 how="intersection", keep_geom_type=True)
+cells["easement"] = (ei.groupby("index").geometry.apply(lambda g: g.area.sum()) / area
+                     ).reindex(cells.index).fillna(0).clip(0, 1).values
+cent = cells.centroid
+for kind, f in (("water", _need[1]), ("sewer", _need[2])):
+    u = gpd.read_parquet(f).to_crs(ALBERS).geometry.make_valid().union_all()
+    d = cent.distance(u).values
+    cells[f"{kind}_access"] = np.clip(1 - (d - SERVICE_FULL_M) / (SERVICE_ZERO_M - SERVICE_FULL_M), 0, 1)
+cells["service"] = (cells["water_access"] + cells["sewer_access"]) / 2
+cells["utilities"] = SERVICE_FLOOR + (1 - SERVICE_FLOOR) * cells["service"]
+
+# --- land that can't hold homes: utility easements, water, and canal / aqueduct right-of-way --------------
+canals = water[water["subtype"].eq("canal") | water["class"].isin(["canal", "ditch", "drain"])]
+lost_geom = shapely.union_all([ease.geometry.union_all(), water.geometry.union_all(),
+                               canals.geometry.buffer(CANAL_SETBACK_M).union_all()])
+li = gpd.overlay(cells[["geometry"]].reset_index(), gpd.GeoDataFrame(geometry=[lost_geom], crs=ALBERS),
+                 how="intersection", keep_geom_type=True)
+cells["lost"] = (li.groupby("index").geometry.apply(lambda g: g.area.sum()) / area
+                 ).reindex(cells.index).fillna(0).clip(0, 1).values
+
+# --- general plan land use (reference/general_plans) -------------------------------------------------------
+print("General plans ...")
+gp = gpd.read_file(ROOT / "reference" / "general_plans" / "general_plans_san_joaquin.geojson").to_crs(ALBERS)
+gp["grp"] = gp["luc"].astype(int).map(PLAN_GROUPS).fillna("housing")
+gp["geometry"] = gp.geometry.make_valid()
+gpi = gpd.overlay(cells[["geometry"]].reset_index(), gp[["grp", "geometry"]], how="intersection", keep_geom_type=True)
+gpi["a"] = gpi.geometry.area / area
+shares = gpi.pivot_table(index="index", columns="grp", values="a", aggfunc="sum").reindex(cells.index).fillna(0)
+for g in ("ag", "industrial", "commercial", "open", "housing"):
+    cells[f"plan_{g}"] = (shares[g] if g in shares else 0.0)
+cells["plan_nonres"] = sum(cells[f"plan_{g}"] * (PLAN_PENALTY[g] > 0) for g in ("industrial", "commercial", "open"))
+cells["plan"] = (1 - sum(PLAN_PENALTY[g] * cells[f"plan_{g}"] for g in PLAN_PENALTY)).clip(0, 1)
+print(f"  {int((cells['plan_nonres'] > 0.5).sum()):,} cells mostly planned for penalised uses; "
+      f"{int((cells['lost'] > 0.2).sum()):,} cells over 20% easement, water or canal right-of-way")
+print(f"  {int((cells['easement'] > 0).sum()):,} cells touch an easement; "
+      f"{int((cells['service'] >= 1).sum()):,} have full water + sewer access, "
+      f"{int((cells['service'] == 0).sum()):,} have none")
 
 # --- Williamson Act / Farmland Security Zone contracts (county assessor parcels) ------------------
 # Contracted farmland can't be developed while the contract runs (9-10 years after a notice of
@@ -208,7 +276,9 @@ def clusters(year):
 
 def score(year):
     built = existed_by(year)
-    fp = b.loc[built].groupby("cell")["area_m2"].sum().reindex(cells.index).fillna(0)
+    # commercial / industrial buildings occupy far more land (parking, yards) than their roofs
+    w = np.where(b["category"].isin(["Commercial", "Industrial"]), CI_COVERAGE, 1.0)
+    fp = (b["area_m2"] * w)[built].groupby(b.loc[built, "cell"]).sum().reindex(cells.index).fillna(0)
     built_frac = (fp / area).clip(0, 1)
     room = np.where(built_frac < 0.06, 1.0, np.where(built_frac < 0.12, 0.5, 0.0))
     urban = cells.loc[built_frac >= 0.10, ["cx", "cy"]].values
@@ -232,10 +302,12 @@ def score(year):
     fire = fire_at(year)
     contract, contract_ending = farm_contracts(year)
     farm = 1 - CONTRACT_PENALTY * contract
-    s = (100 * mom * room * cells["terrain"].values * adjacency * farm
-         * (1 - fire["fire_risk"].values) ** FIRE_EXPONENT)
-    s[excluded.values] = 0
-    out = pd.DataFrame({"score": s, "momentum": mom, "room": room, "adjacency": adjacency,
+    core = (100 * mom * room * cells["terrain"].values * adjacency * farm
+            * (1 - fire["fire_risk"].values) ** FIRE_EXPONENT)
+    core[excluded.values] = 0
+    core = core * (1 - cells["lost"].values) * cells["plan"].values
+    s = core * cells["utilities"].values
+    out = pd.DataFrame({"score": s, "score_core": core, "momentum": mom, "room": room, "adjacency": adjacency,
                         "built_frac": built_frac.values, "contract": contract,
                         "contract_ending": contract_ending})
     return pd.concat([out, fire.reset_index(drop=True)], axis=1)
@@ -247,7 +319,8 @@ def score(year):
 PRED_YEARS = list(range(2000, YEAR + 1))
 THRESH = 30
 TOP_SHARE = 0.05
-STATIC = ["geometry", "fhsz_class", "flat_share", "slope_mean", "elev_m", "terrain"]
+STATIC = ["geometry", "fhsz_class", "flat_share", "slope_mean", "elev_m", "terrain", "easement", "water_access",
+          "sewer_access", "utilities", "lost", "plan", "plan_nonres", "plan_housing"]
 big_places = places[places["kind"] == "City"]
 
 
@@ -276,40 +349,122 @@ def name_zone(z):
     return f"{edge_km:.1f} km {side} of {pl['name']} city limits", pl["name"]
 
 
-def zones_for(cy):
-    """Merge touching cells scoring >= THRESH into zones; return the top 10 (Albers)."""
-    hot = cy[cy["score"] >= THRESH]
+def merge(hot):
+    """Merge touching cells into zones: [(polygon, its cells)]."""
     if hot.empty:
-        return gpd.GeoDataFrame(geometry=[], crs=ALBERS)
+        return []
     u = hot.geometry.union_all().buffer(1)
-    rows = []
+    out = []
     for z in (list(u.geoms) if u.geom_type == "MultiPolygon" else [u]):
         zc = hot[hot.centroid.within(z)]
-        if zc.empty:
-            continue
+        if not zc.empty:
+            out.append((z, zc))
+    return out
+
+
+def zone_row(z, zc):
+    return {
+        "score_sum": round(float(zc["score"].sum()), 1),
+        "score_max": round(float(zc["score"].max()), 1), "cells": int(len(zc)),
+        "acres": round(float(((1 - zc["built_frac"]) * area).sum() / 4046.86)),
+        "momentum": round(float(zc["momentum"].mean()), 2),
+        "fire_risk": round(float(zc["fire_risk"].mean()), 2),
+        "contract_share": round(float(zc["contract"].mean()), 2),
+        "contract_ending_share": round(float(zc["contract_ending"].mean()), 2),
+        "slope_mean": round(float(zc["slope_mean"].mean()), 1),
+        "flat_share": round(float(zc["flat_share"].mean()), 2),
+        "elev_m": round(float(zc["elev_m"].mean())),
+        "fhsz": ", ".join(sorted(set(zc["fhsz_class"]) - {"None"})) or "None",
+        "fire_history": round(float(zc["fire_history"].mean()), 2),
+        "years_since_fire": (None if zc["years_since_fire"].isna().all() else int(zc["years_since_fire"].min())),
+        "easement_share": round(float(zc["easement"].mean()), 3),
+        "lost_share": round(float(zc["lost"].mean()), 3),
+        "plan_nonres_share": round(float(zc["plan_nonres"].mean()), 2),
+        "plan_housing_share": round(float(zc["plan_housing"].mean()), 2),
+        "water_access": round(float(zc["water_access"].mean()), 2),
+        "sewer_access": round(float(zc["sewer_access"].mean()), 2),
+        # each factor of the score, 0-100 (100 = no penalty), averaged over the zone's cells
+        "factors": {
+            "momentum": round(100 * float(zc["momentum"].mean())),
+            "open_land": round(100 * float(zc["room"].mean())),
+            "flat": round(100 * float(zc["terrain"].mean())),
+            "next_to_town": round(100 * float(zc["adjacency"].mean())),
+            "farmland": round(100 * float((1 - CONTRACT_PENALTY * zc["contract"]).mean())),
+            "water_sewer": round(100 * float(zc["utilities"].mean())),
+            "usable_land": round(100 * float((1 - zc["lost"]).mean())),
+            "land_use": round(100 * float(zc["plan"].mean())),
+            "fire": round(100 * float(((1 - zc["fire_risk"]) ** FIRE_EXPONENT).mean())),
+        },
+        "geometry": z.simplify(15),  # merged squares carry many redundant vertices
+    }
+
+
+def zones_for(cy):
+    """Merge touching cells scoring >= THRESH into zones; return the top 10 (Albers)."""
+    rows = []
+    for z, zc in merge(cy[cy["score"] >= THRESH]):
         label, place = name_zone(z)
-        rows.append({
-            "label": label, "place": place, "score_sum": round(float(zc["score"].sum()), 1),
-            "score_max": round(float(zc["score"].max()), 1), "cells": int(len(zc)),
-            "acres": round(float(((1 - zc["built_frac"]) * area).sum() / 4046.86)),
-            "momentum": round(float(zc["momentum"].mean()), 2),
-            "fire_risk": round(float(zc["fire_risk"].mean()), 2),
-            "contract_share": round(float(zc["contract"].mean()), 2),
-            "contract_ending_share": round(float(zc["contract_ending"].mean()), 2),
-            "slope_mean": round(float(zc["slope_mean"].mean()), 1),
-            "flat_share": round(float(zc["flat_share"].mean()), 2),
-            "elev_m": round(float(zc["elev_m"].mean())),
-            "fhsz": ", ".join(sorted(set(zc["fhsz_class"]) - {"None"})) or "None",
-            "fire_history": round(float(zc["fire_history"].mean()), 2),
-            "years_since_fire": (None if zc["years_since_fire"].isna().all() else int(zc["years_since_fire"].min())),
-            "geometry": z.simplify(15),  # merged squares carry many redundant vertices
-        })
+        rows.append({"label": label, "place": place} | zone_row(z, zc))
+    if not rows:
+        return gpd.GeoDataFrame(geometry=[], crs=ALBERS)
     zs = gpd.GeoDataFrame(rows, crs=ALBERS).sort_values("score_sum", ascending=False).reset_index(drop=True)
     zs["rank"] = zs.index + 1
     return zs[zs["rank"] <= 10]
 
 
-cell_frames, zone_frames, by_year, results = [], [], {}, {}
+# regions: towns (with a REGION_BUFFER_M margin, since growth happens at their edges) and the county's areas
+# and their rural land (17_areas.py; exact boundaries, as they tile the county)
+_areas_path = PROCESSED / "areas.geojson"
+_areas = (gpd.read_file(_areas_path).to_crs(ALBERS) if _areas_path.exists()
+          else gpd.GeoDataFrame(columns=["GEOID", "name", "kind", "geometry"], geometry="geometry", crs=ALBERS))
+regions = pd.concat([places[["GEOID", "name", "kind", "geometry"]], _areas[["GEOID", "name", "kind", "geometry"]]],
+                    ignore_index=True).set_index("GEOID")
+region_geom = regions.geometry
+region_area = gpd.GeoSeries([g.buffer(REGION_BUFFER_M) if k in ("City", "CDP") else g
+                             for g, k in zip(regions.geometry, regions["kind"])], index=regions.index, crs=ALBERS)
+cell_cent = gpd.GeoSeries(cells.centroid, crs=ALBERS)
+region_cells = {g: np.flatnonzero(cell_cent.within(a).values) for g, a in region_area.items()}
+
+
+def name_in_region(z, geoid):
+    """'Inside Lodi', 'Lodi – N edge' or '1.2 km NE of Lodi'."""
+    pg, name = region_geom[geoid], regions.loc[geoid, "name"]
+    cen = z.centroid
+    pc = pg.representative_point()
+    brg = (math.degrees(math.atan2(cen.x - pc.x, cen.y - pc.y)) + 360) % 360
+    side = COMPASS[int((brg + 22.5) // 45) % 8]
+    inside = z.intersection(pg).area / z.area
+    if regions.loc[geoid, "kind"] in ("Area", "Rural"):  # big regions: name after the nearest town instead
+        return name_zone(z)[0]
+    if inside > 0.6:
+        return f"Inside {name} – {side}"
+    d = pg.distance(cen)
+    return f"{name} – {side} edge" if d < 750 else f"{d / 1000:.1f} km {side} of {name}"
+
+
+def region_zones(cy, zs):
+    """Each region's own best zones (local threshold, so every region gets a ranking where any cell scores)."""
+    out = []
+    for geoid, idx in region_cells.items():
+        rc = cy.iloc[idx]
+        rc = rc[rc["score"] > 0]
+        if rc.empty or rc["score"].max() < 5:
+            continue
+        th = min(THRESH, max(5.0, 0.5 * rc["score"].max()))
+        rows = []
+        for z, zc in merge(rc[rc["score"] >= th]):
+            ov = zs.geometry.intersection(z).area if len(zs) else pd.Series(dtype=float)
+            county_rank = int(zs.loc[ov.idxmax(), "rank"]) if len(ov) and ov.max() > 0.2 * z.area else None
+            rows.append({"GEOID": geoid, "label": name_in_region(z, geoid), "county_rank": county_rank}
+                        | zone_row(z, zc))
+        rz = sorted(rows, key=lambda r: -r["score_sum"])[:REGION_TOP]
+        for i, r in enumerate(rz):
+            r["rank"] = i + 1
+        out += rz
+    return gpd.GeoDataFrame(out, crs=ALBERS) if out else gpd.GeoDataFrame(geometry=[], crs=ALBERS)
+
+
+cell_frames, zone_frames, region_frames, by_year, results = [], [], [], {}, {}
 for y in PRED_YEARS:
     cur = score(y)
     results[y] = cur
@@ -319,6 +474,8 @@ for y in PRED_YEARS:
     cy["score"] = cy["score"].round(1)
     zs = zones_for(cy)
     zs["year"] = y
+    rzs = region_zones(cy, zs)
+    rzs["year"] = y
 
     # what actually happened next (complete 5-year window up to 2020; partial after)
     y_end = min(y + WINDOW, YEAR)
@@ -336,13 +493,21 @@ for y in PRED_YEARS:
                "top5_pct": round(100 * hpc[top].sum() / total, 1) if total else None}
     zl = zs.to_crs(4326)
     lab = zs.geometry.representative_point().to_crs(4326) if len(zs) else []
+    rzl = rzs.to_crs(4326)
+    rlab = rzs.geometry.representative_point().to_crs(4326) if len(rzs) else []
+    regional = {}
+    for r, p in zip(rzl.to_dict("records"), rlab):
+        regional.setdefault(r["GEOID"], []).append(
+            {k: v for k, v in r.items() if k not in ("geometry", "year", "GEOID")} | {"lon": round(p.x, 5), "lat": round(p.y, 5)})
     by_year[str(y)] = {
         "window": f"{y - WINDOW + 1}–{y}",
         "zones": [{k: v for k, v in r.items() if k not in ("geometry", "year")} | {"lon": round(p.x, 5), "lat": round(p.y, 5)}
                   for r, p in zip(zl.to_dict("records"), lab)],
+        "regional": regional,
         "next": nxt,
     }
     zone_frames.append(zl)
+    region_frames.append(rzl)
     keep = cy[cy["score"] >= 5].copy()
     keep["year"] = y
     cell_frames.append(keep)
@@ -359,30 +524,45 @@ for y in BACKTEST_YEARS:
     top = np.argsort(-s)[: int(TOP_SHARE * len(cells))]
     top = top[s[top] > 0]
     captured = hpc[top].sum() / max(hpc.sum(), 1)
+
+    def cap(sv):
+        t = np.argsort(-sv)[: int(TOP_SHARE * len(cells))]
+        t = t[sv[t] > 0]
+        return round(100 * hpc[t].sum() / max(hpc.sum(), 1), 1)
+    core = r["score_core"].values
+    no_util = cap(core)
     base_s = r["room"] * r["adjacency"] * (~excluded).values
     base_top = np.argsort(-(base_s.values + np.random.default_rng(0).random(len(cells)) * 1e-6))[: len(top)]
     base_cap = hpc[base_top].sum() / max(hpc.sum(), 1)
     backtest.append({"as_of": y, "predicts": f"{y + 1}–{y + WINDOW}", "homes_built": int(hpc.sum()),
                      "top_cells": int(len(top)), "top_area_pct": round(100 * len(top) / len(cells), 1),
-                     "captured_pct": round(100 * captured, 1), "baseline_pct": round(100 * base_cap, 1)})
+                     "captured_pct": round(100 * captured, 1), "baseline_pct": round(100 * base_cap, 1),
+                     "no_utilities_pct": no_util})
     print(f"  backtest {y}: top {len(top)} cells captured {100 * captured:.1f}% of homes built "
-          f"{y + 1}-{y + WINDOW} (edge-of-town baseline {100 * base_cap:.1f}%)")
+          f"{y + 1}-{y + WINDOW} (without water/sewer {no_util}%; "
+          f"edge-of-town baseline {100 * base_cap:.1f}%)")
 
 # --- outputs -----------------------------------------------------------------------------------
 from tiler import make_pmtiles  # noqa: E402
 
 allz = gpd.GeoDataFrame(pd.concat(zone_frames, ignore_index=True), crs=4326)
 write_geojson(allz, WEB_DATA / "recommend_zones.geojson")
+allr = gpd.GeoDataFrame(pd.concat(region_frames, ignore_index=True), crs=4326)
+allr["county_rank"] = allr["county_rank"].astype("Int64")
+write_geojson(allr[["GEOID", "year", "rank", "county_rank", "label", "geometry"]],
+              WEB_DATA / "recommend_region_zones.geojson")
 
 allc = gpd.GeoDataFrame(pd.concat(cell_frames, ignore_index=True), crs=ALBERS)
 for c in ("fire_risk", "fire_history", "fire_freq", "fire_reburn", "fire_last", "fire_detections", "momentum",
-          "adjacency", "flat_share", "terrain", "contract", "contract_ending"):
+          "adjacency", "flat_share", "terrain", "contract", "contract_ending", "easement", "water_access",
+          "sewer_access", "utilities", "lost", "plan", "plan_nonres", "plan_housing"):
     allc[c] = allc[c].round(2)
 allc["slope_mean"] = allc["slope_mean"].round(1)
 allc["elev_m"] = allc["elev_m"].round(0)
 CELL_PROPS = ["year", "score", "momentum", "room", "terrain", "flat_share", "slope_mean", "elev_m", "adjacency",
               "fire_risk", "fire_history", "fire_freq", "fire_reburn", "fire_last", "fire_detections",
-              "years_since_fire", "fhsz_class", "contract", "contract_ending"]
+              "years_since_fire", "fhsz_class", "contract", "contract_ending", "easement", "water_access",
+              "sewer_access", "utilities", "lost", "plan", "plan_nonres", "plan_housing"]
 make_pmtiles(allc[CELL_PROPS + ["geometry"]], WEB_DATA / "recommend_cells.pmtiles", "rec", 8, 13, CELL_PROPS,
              simplify_px=0, buffer_px=2, attribution="CA Development Explorer model")
 old = WEB_DATA / "recommend_cells.geojson"
@@ -400,6 +580,10 @@ write_json({
                  "too_steep_cells": int(cells["too_steep"].sum())},
     "fire_exponent": FIRE_EXPONENT,
     "contract_penalty": CONTRACT_PENALTY,
+    "land_use": {"plan_penalty": PLAN_PENALTY, "ci_coverage": CI_COVERAGE,
+                 "canal_setback_m": CANAL_SETBACK_M},
+    "utilities": {"service_floor": SERVICE_FLOOR, "full_m": SERVICE_FULL_M, "zero_m": SERVICE_ZERO_M,
+                  "region_buffer_m": REGION_BUFFER_M},
     "undated_from": UNDATED_FROM,
     "fire_half_life": HALF_LIFE,
     "fire_method": FIRE_METHOD,
