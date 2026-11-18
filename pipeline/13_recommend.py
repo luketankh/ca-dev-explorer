@@ -66,9 +66,15 @@ PLAN_PENALTY = {  # share of score lost on land a general plan reserves for each
     "commercial": float(os.environ.get("COMM_PENALTY", 0.0)),  # often mixed into new neighbourhoods
     "ag": float(os.environ.get("AG_PENALTY", 0.0)),            # much new housing is built on farmland
 }
+# flood (FEMA NFHL + DWR 200-year floodplain, prepared by 14_flood.py): the floodway is unbuildable; land in a
+# floodplain (FEMA 100-year, or DWR 200-year, which covers most levee-protected land) loses FLOOD_PENALTY: raised
+# pads, flood insurance, and SB 5's 200-year protection finding. One flat penalty backtested as well as separate
+# 100-/200-year penalties (0.5 / 0.2), so the simpler rule is used.
+FLOOD_PENALTY = float(os.environ.get("FLOOD_PENALTY", 0.3))
 CI_COVERAGE = float(os.environ.get("CI_COVERAGE", 3.0))     # a warehouse's lot (paving, yards) ~3x its roof
 CANAL_SETBACK_M = float(os.environ.get("CANAL_SETBACK_M", 30))  # canal / aqueduct right-of-way either side
 PLAN_GROUPS = {1: "ag", 2: "industrial", 3: "commercial", 4: "commercial", 8: "open"}  # the rest: housing-friendly
+DROP = {f for f in os.environ.get("DROP", "").split(",") if f}
 REGION_BUFFER_M = 1500  # a region's own zones: cells within this distance of its boundary
 REGION_TOP = 5
 AHEAD_M, SIGMA_M = 1500, 1200
@@ -166,14 +172,40 @@ for kind, f in (("water", _need[1]), ("sewer", _need[2])):
 cells["service"] = (cells["water_access"] + cells["sewer_access"]) / 2
 cells["utilities"] = SERVICE_FLOOR + (1 - SERVICE_FLOOR) * cells["service"]
 
-# --- land that can't hold homes: utility easements, water, and canal / aqueduct right-of-way --------------
+# --- flood (14_flood.py) -------------------------------------------------------------------------------
+print("Flood ...")
+_fz, _dwr = PROCESSED / "flood_zones.parquet", RAW / "dwr_200yr_floodplain.parquet"
+if not (_fz.exists() and _dwr.exists()):
+    raise SystemExit("Run 14_flood.py first (it prepares the flood data this step scores with).")
+fz = gpd.read_parquet(_fz).to_crs(ALBERS)
+
+
+def cell_share(geom):
+    """Share (0-1) of each cell inside `geom` (one shapely geometry, Albers)."""
+    if geom is None or geom.is_empty:
+        return np.zeros(len(cells))
+    ov = gpd.overlay(cells[["geometry"]].reset_index(), gpd.GeoDataFrame(geometry=[geom], crs=ALBERS),
+                     how="intersection", keep_geom_type=True)
+    return (ov.groupby("index").geometry.apply(lambda g: g.area.sum()) / area).reindex(cells.index).fillna(0).clip(0, 1).values
+
+
+floodway_geom = shapely.union_all(fz.loc[fz.cls == "floodway"].geometry.values)
+for c in ("floodway", "100yr", "500yr", "levee"):
+    cells[f"flood_{c}"] = cell_share(shapely.union_all(fz.loc[fz.cls == c].geometry.values)) if c != "floodway" \
+        else cell_share(floodway_geom)
+dwr = gpd.read_parquet(_dwr).to_crs(ALBERS)
+cells["flood_200yr"] = cell_share(shapely.union_all([shapely.make_valid(g) for g in dwr.geometry if g is not None]))
+plain = shapely.union_all([shapely.union_all(fz.loc[fz.cls == "100yr"].geometry.values),
+                           *[shapely.make_valid(g) for g in dwr.geometry if g is not None]]).difference(floodway_geom)
+cells["flood_plain"] = cell_share(plain)
+cells["flood"] = (1 - FLOOD_PENALTY * cells["flood_plain"]).clip(0, 1)
+
+# --- land that can't hold homes: water, canal / aqueduct right-of-way and the floodway (power and gas easements
+# are their own factor) --------------------------------------------------------------------------------------
 canals = water[water["subtype"].eq("canal") | water["class"].isin(["canal", "ditch", "drain"])]
-lost_geom = shapely.union_all([ease.geometry.union_all(), water.geometry.union_all(),
-                               canals.geometry.buffer(CANAL_SETBACK_M).union_all()])
-li = gpd.overlay(cells[["geometry"]].reset_index(), gpd.GeoDataFrame(geometry=[lost_geom], crs=ALBERS),
-                 how="intersection", keep_geom_type=True)
-cells["lost"] = (li.groupby("index").geometry.apply(lambda g: g.area.sum()) / area
-                 ).reindex(cells.index).fillna(0).clip(0, 1).values
+lost_geom = shapely.union_all([water.geometry.union_all(), canals.geometry.buffer(CANAL_SETBACK_M).union_all(),
+                               floodway_geom]).difference(ease.geometry.union_all())
+cells["lost"] = cell_share(lost_geom)
 
 # --- general plan land use (reference/general_plans) -------------------------------------------------------
 print("General plans ...")
@@ -302,11 +334,17 @@ def score(year):
     fire = fire_at(year)
     contract, contract_ending = farm_contracts(year)
     farm = 1 - CONTRACT_PENALTY * contract
-    core = (100 * mom * room * cells["terrain"].values * adjacency * farm
-            * (1 - fire["fire_risk"].values) ** FIRE_EXPONENT)
+    # the score: 100 x every factor multiplied together (each 0-1). DROP (env, comma-separated) leaves factors out,
+    # for "does this factor earn its place?" backtests.
+    factors = {
+        "momentum": mom, "open_land": room, "flat": cells["terrain"].values, "next_to_town": adjacency,
+        "farmland": farm, "power_gas": 1 - cells["easement"].values, "usable_land": 1 - cells["lost"].values,
+        "flood": cells["flood"].values, "land_use": cells["plan"].values,
+        "fire": (1 - fire["fire_risk"].values) ** FIRE_EXPONENT,
+    }
+    core = 100 * np.prod([v for k, v in factors.items() if k not in DROP], axis=0)
     core[excluded.values] = 0
-    core = core * (1 - cells["lost"].values) * cells["plan"].values
-    s = core * cells["utilities"].values
+    s = core * (cells["utilities"].values if "water_sewer" not in DROP else 1)
     out = pd.DataFrame({"score": s, "score_core": core, "momentum": mom, "room": room, "adjacency": adjacency,
                         "built_frac": built_frac.values, "contract": contract,
                         "contract_ending": contract_ending})
@@ -320,7 +358,8 @@ PRED_YEARS = list(range(2000, YEAR + 1))
 THRESH = 30
 TOP_SHARE = 0.05
 STATIC = ["geometry", "fhsz_class", "flat_share", "slope_mean", "elev_m", "terrain", "easement", "water_access",
-          "sewer_access", "utilities", "lost", "plan", "plan_nonres", "plan_housing"]
+          "sewer_access", "utilities", "lost", "plan", "plan_nonres", "plan_housing", "flood", "flood_floodway",
+          "flood_100yr", "flood_500yr", "flood_levee", "flood_200yr"]
 big_places = places[places["kind"] == "City"]
 
 
@@ -378,23 +417,31 @@ def zone_row(z, zc):
         "fire_history": round(float(zc["fire_history"].mean()), 2),
         "years_since_fire": (None if zc["years_since_fire"].isna().all() else int(zc["years_since_fire"].min())),
         "easement_share": round(float(zc["easement"].mean()), 3),
+        **{f"flood_{c}_share": round(float(zc[f"flood_{c}"].mean()), 3)
+           for c in ("floodway", "100yr", "500yr", "levee", "200yr")},
         "lost_share": round(float(zc["lost"].mean()), 3),
         "plan_nonres_share": round(float(zc["plan_nonres"].mean()), 2),
         "plan_housing_share": round(float(zc["plan_housing"].mean()), 2),
         "water_access": round(float(zc["water_access"].mean()), 2),
         "sewer_access": round(float(zc["sewer_access"].mean()), 2),
-        # each factor of the score, 0-100 (100 = no penalty), averaged over the zone's cells
-        "factors": {
+        # each factor of the score, 0-100 (100 = no penalty), averaged over the zone's cells. "score" multiplies
+        # these rounded factors, so it reconciles exactly with what the app shows; zones are *ranked* by
+        # score_sum (every cell's own score added up), which rewards size as well as quality.
+        "factors": (fac := {
             "momentum": round(100 * float(zc["momentum"].mean())),
             "open_land": round(100 * float(zc["room"].mean())),
             "flat": round(100 * float(zc["terrain"].mean())),
             "next_to_town": round(100 * float(zc["adjacency"].mean())),
             "farmland": round(100 * float((1 - CONTRACT_PENALTY * zc["contract"]).mean())),
             "water_sewer": round(100 * float(zc["utilities"].mean())),
+            "power_gas": round(100 * float((1 - zc["easement"]).mean())),
             "usable_land": round(100 * float((1 - zc["lost"]).mean())),
+            "flood": round(100 * float(zc["flood"].mean())),
             "land_use": round(100 * float(zc["plan"].mean())),
             "fire": round(100 * float(((1 - zc["fire_risk"]) ** FIRE_EXPONENT).mean())),
-        },
+        }),
+        "score": round(100 * float(np.prod([v / 100 for v in fac.values()]))),
+        "score_avg": round(float(zc["score"].mean()), 1),
         "geometry": z.simplify(15),  # merged squares carry many redundant vertices
     }
 
@@ -465,9 +512,12 @@ def region_zones(cy, zs):
 
 
 cell_frames, zone_frames, region_frames, by_year, results = [], [], [], {}, {}
-for y in PRED_YEARS:
+BACKTEST_ONLY = os.environ.get("BACKTEST_ONLY") == "1"  # quick experiments: score the test years, print, stop
+for y in (BACKTEST_YEARS if BACKTEST_ONLY else PRED_YEARS):
     cur = score(y)
     results[y] = cur
+    if BACKTEST_ONLY:
+        continue
     cy = cells[STATIC].copy()
     for c in cur.columns:
         cy[c] = cur[c].values
@@ -542,6 +592,9 @@ for y in BACKTEST_YEARS:
           f"{y + 1}-{y + WINDOW} (without water/sewer {no_util}%; "
           f"edge-of-town baseline {100 * base_cap:.1f}%)")
 
+if BACKTEST_ONLY:
+    raise SystemExit(0)
+
 # --- outputs -----------------------------------------------------------------------------------
 from tiler import make_pmtiles  # noqa: E402
 
@@ -555,14 +608,14 @@ write_geojson(allr[["GEOID", "year", "rank", "county_rank", "label", "geometry"]
 allc = gpd.GeoDataFrame(pd.concat(cell_frames, ignore_index=True), crs=ALBERS)
 for c in ("fire_risk", "fire_history", "fire_freq", "fire_reburn", "fire_last", "fire_detections", "momentum",
           "adjacency", "flat_share", "terrain", "contract", "contract_ending", "easement", "water_access",
-          "sewer_access", "utilities", "lost", "plan", "plan_nonres", "plan_housing"):
+          "sewer_access", "utilities", "lost", "plan", "plan_nonres", "plan_housing", "flood"):
     allc[c] = allc[c].round(2)
 allc["slope_mean"] = allc["slope_mean"].round(1)
 allc["elev_m"] = allc["elev_m"].round(0)
 CELL_PROPS = ["year", "score", "momentum", "room", "terrain", "flat_share", "slope_mean", "elev_m", "adjacency",
               "fire_risk", "fire_history", "fire_freq", "fire_reburn", "fire_last", "fire_detections",
               "years_since_fire", "fhsz_class", "contract", "contract_ending", "easement", "water_access",
-              "sewer_access", "utilities", "lost", "plan", "plan_nonres", "plan_housing"]
+              "sewer_access", "utilities", "lost", "plan", "plan_nonres", "plan_housing", "flood"]
 make_pmtiles(allc[CELL_PROPS + ["geometry"]], WEB_DATA / "recommend_cells.pmtiles", "rec", 8, 13, CELL_PROPS,
              simplify_px=0, buffer_px=2, attribution="CA Development Explorer model")
 old = WEB_DATA / "recommend_cells.geojson"
@@ -582,6 +635,9 @@ write_json({
     "contract_penalty": CONTRACT_PENALTY,
     "land_use": {"plan_penalty": PLAN_PENALTY, "ci_coverage": CI_COVERAGE,
                  "canal_setback_m": CANAL_SETBACK_M},
+    "flood_penalty": FLOOD_PENALTY,
+    "flood_method": (f"Floodway: unbuildable. Land in a floodplain (FEMA 100-year or DWR 200-year): loses "
+                     f"{FLOOD_PENALTY:.0%}."),
     "utilities": {"service_floor": SERVICE_FLOOR, "full_m": SERVICE_FULL_M, "zero_m": SERVICE_ZERO_M,
                   "region_buffer_m": REGION_BUFFER_M},
     "undated_from": UNDATED_FROM,

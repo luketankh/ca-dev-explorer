@@ -6,8 +6,8 @@ understand *why* a decision was made, but trust the code where they disagree.
 
 **Open review items.** The final review (turn 27 of `docs/CHAT_HISTORY.md`) lists ranked recommendations.
 Done since: Williamson Act farmland, growth on a fixed scale (plus a multiplicative opportunity score), and no
-backtest look-ahead from undated buildings, utilities in the score (16_utilities.py). Flood zones are now shown
-(14_flood.py) but not scored. Still open, highest first: scoring flood risk
+backtest look-ahead from undated buildings, utilities in the score (16_utilities.py). Flood is now scored
+(floodway unbuildable, floodplain −30%). Still open, highest first: scoring flood risk
 (FEMA / 200-year floodplain), then medium items 5–9 and low items 10–15.
 
 ## What this is
@@ -44,7 +44,7 @@ static "Aerial" toggle (latest USGS/NAIP only; the old per-year NAIP via Planeta
   `src/config.ts` (years, data URLs, colour ramps), `src/types.ts` (data shapes).
 - `data/` (git-ignored): raw downloads and intermediate files.
 - `web/public/data/` (git-ignored): what the app loads. Get it with `./fetch_data.sh`
-  (GitHub release `data-v8`) or rebuild with `./run_pipeline.sh`.
+  (GitHub release `data-v9`) or rebuild with `./run_pipeline.sh`.
 
 ## Commands
 
@@ -88,11 +88,13 @@ There is no test suite yet. Verify changes by type-checking, building, and openi
 - **Recommendation** (`13_recommend.py`) runs **once per year 2000–2025**, each with only that year's data
   (`score(year)`, fire history `as_of` that year). The app filters cells, zones and labels by `year` and shows
   "what happened next" from `recommend.json` → `by_year`. 500 m cells, score = 100 × momentum × open land × flat share × next to
-  town × (1 − `CONTRACT_PENALTY` × farmland contract) × water & sewer × usable land × land use
-  × (1 − fire risk)^`FIRE_EXPONENT` (= 2, progressive;
+  town × farmland × water & sewer × power & gas × canal (water, canal ROW, floodway) × flood (floodplain −30%,
+  `FLOOD_PENALTY`) × land use × (1 − fire risk)^`FIRE_EXPONENT` (= 2, progressive;
   history: 1 − 0.8·risk, then 1 − 0.4·risk). The Delta Primary Zone and water are excluded. Backtest: the top 5%
   of cells captured 48–62% of the next 5 years' homes (26–40% for an edge-of-town rule). Each zone carries
-  `factors` (0–100 per factor), shown as a strip in the Analysis table.
+  `factors` (0–100 per factor) and `score` = those factors multiplied (checked by 18_check.py), shown as a strip in
+  the Analysis table. Zones rank by `score_sum`. `BACKTEST_ONLY=1` and `DROP=factor,...` env vars run quick
+  leave-one-out backtests. 14_flood now runs *before* 13 (13 scores flood and writes zone flood shares).
 - **Land use / usable land:** general plan *Industrial* loses `PLAN_PENALTY["industrial"] = 0.8` (commercial, open
   space and ag aren't penalised: that cost 2–8 backtest points). Usable land = 1 − share in power/gas easements,
   water, or a 30 m canal/Aqueduct right-of-way. C&I footprints count 3× (`CI_COVERAGE`) toward "built". Env vars

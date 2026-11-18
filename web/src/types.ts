@@ -74,6 +74,8 @@ export interface RecZone {
   county_rank?: number | null;
   /** Each score factor 0-100 (100 = no penalty), averaged over the zone's cells. */
   factors?: Record<string, number>;
+  score?: number;      // 100 x the factors above multiplied (reconciles with what the app shows)
+  score_avg?: number;  // average of the zone's cells' own scores
   lost_share?: number;
   plan_nonres_share?: number;
   plan_housing_share?: number; // regional zones: the county-wide rank of the zone it overlaps, if any
@@ -104,6 +106,7 @@ export interface Recommend {
   terrain: { slope_ok_pct: number; slope_max_pct: number; dem: string };
   fire_exponent: number;
   contract_penalty: number;
+  flood_penalty?: number;
   utilities?: { service_floor: number; full_m: number; zero_m: number; region_buffer_m: number };
   undated_from: number;
   fire_half_life: number;

@@ -4,11 +4,12 @@ Every count must add up wherever the app shows it:
   - the 9 areas add up to the county, and each area = its towns + its rural land (every building counted once)
   - each region's yearly series matches its headline counts (homes 2016-25, stock in 2015, 2021-25)
   - growth % = homes built 2016-25 / homes standing in 2015, for every region and the county
-  - build-next zones: ranks run 1..n, acres fit inside their cells, a region's "County #" points at a real county zone,
+  - build-next zones: score = the shown factors multiplied, ranks run 1..n, acres fit inside their cells, a region's "County #" points at a real county zone,
     and the county / regional zones in recommend.json match the map polygons
 Run it after the other steps (it only reads web/public/data).
 """
 import json
+import math
 import sys
 
 from common import WEB_DATA
@@ -76,6 +77,9 @@ for y, v in rec["by_year"].items():
     for z in v["zones"]:
         check((y, z["rank"]) in county_poly, f"{y}: county zone #{z['rank']} has no map polygon")
         check(z["acres"] <= z["cells"] * CELL_ACRES + 1, f"{y}: zone #{z['rank']} {z['acres']} acres > its cells")
+        if "factors" in z:
+            prod = round(100 * math.prod(f / 100 for f in z["factors"].values()))
+            check(z["score"] == prod, f"{y}: zone #{z['rank']} score {z['score']} != factors multiplied {prod}")
     for geoid, zl in v.get("regional", {}).items():
         check(geoid in by_id, f"{y}: regional zones for unknown region {geoid}")
         ranks = [z["rank"] for z in zl]
@@ -86,6 +90,9 @@ for y, v in rec["by_year"].items():
             cr = z.get("county_rank")
             check(cr is None or (y, int(cr)) in county_poly, f"{y} {geoid}: County #{cr} doesn't exist")
             check(all(0 <= f <= 100 for f in z.get("factors", {}).values()), f"{y} {geoid}: factor out of 0-100")
+            if "factors" in z:
+                prod = round(100 * math.prod(f / 100 for f in z["factors"].values()))
+                check(z["score"] == prod, f"{y} {geoid}: zone #{z['rank']} score {z['score']} != factors multiplied {prod}")
 
 if errors:
     print(f"FAILED: {len(errors)} consistency problems")

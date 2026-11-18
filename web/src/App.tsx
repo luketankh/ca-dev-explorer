@@ -76,7 +76,7 @@ function recPopup(cell: MapGeoJSONFeature | undefined, zone: { properties: unkno
       recent big fire ${pct(c.fire_last)})${c.years_since_fire !== null && c.years_since_fire !== undefined && c.years_since_fire !== ""
         ? ` · last fire ${Number(c.years_since_fire) === 0 ? "this year" : `${esc(c.years_since_fire)} yrs ago`}` : " · none on record"}</td></tr>` : "";
   return `<div class="pop"><h4>${head}</h4><table>${zoneRows}${cellRows}</table>
-    <div class="pop-id">500 m cell. Score = 100 × momentum × open land × flat share × next to town × (1 − ${contractPenalty} × farmland contract) × water & sewer × usable land × land use × (1 − fire risk)<sup>${fireExponent}</sup>.</div></div>`;
+    <div class="pop-id">500 m square. Score = its 11 factors (0–100 each) multiplied; see “How this is calculated” in Analysis.</div></div>`;
 }
 
 /** One line of flood exposure for a zone or place (shares are 0-1 of its area). */
