@@ -60,21 +60,23 @@ function Kpi({ label, value, note }: { label: string; value: string; note?: stri
 
 /** Score factors in display order: [key, short label, what 100 means]. */
 const FACTORS: [string, string, string][] = [
-  ["momentum", "Grow", "Right in the path of recent home building"],
-  ["open_land", "Open", "Mostly unbuilt land"],
-  ["flat", "Flat", "Slope under 15%"],
-  ["next_to_town", "Town", "Within 1 km of built-up land"],
-  ["farmland", "Farm", "No Williamson Act contract"],
-  ["water_sewer", "W/S", "Water and sewer service within 500 m"],
-  ["usable_land", "Ease", "No power/gas easements, water or canal right-of-way"],
-  ["land_use", "Plan", "Not planned for industry"],
-  ["fire", "Fire", "No wildfire risk"],
+  ["momentum", "Grow", "right where recent building is heading"],
+  ["open_land", "Open", "mostly unbuilt land"],
+  ["flat", "Flat", "slope under 15%"],
+  ["next_to_town", "Town", "within 1 km of a town"],
+  ["farmland", "Farm", "no farmland (Williamson Act) contract"],
+  ["water_sewer", "W/S", "water and sewer within 500 m"],
+  ["power_gas", "Power", "no power-line or gas-pipeline easement"],
+  ["usable_land", "Canal", "no water, canal right-of-way or floodway"],
+  ["flood", "Flood", "outside the 100- and 200-year floodplains"],
+  ["land_use", "Plan", "not planned for industry"],
+  ["fire", "Fire", "no wildfire risk"],
 ];
 
 const FULL_NAME: Record<string, string> = {
   momentum: "Growth momentum", open_land: "Open land", flat: "Flat ground", next_to_town: "Next to town",
-  farmland: "Farmland contracts", water_sewer: "Water & sewer", usable_land: "Easements & canals",
-  land_use: "General plan", fire: "Fire risk",
+  farmland: "Farmland contracts", water_sewer: "Water & sewer", power_gas: "Power lines & gas pipelines",
+  usable_land: "Water, canals & floodway", flood: "Flood", land_use: "General plan", fire: "Fire risk",
 };
 
 /** One small heat-coloured cell per factor, 0-100 (100 = no penalty). */
@@ -197,13 +199,12 @@ export default function Report({ stats, places, selected, year, arrows, recommen
                    push scores below the cut-off.`}
             </div>
           )}
-          {zones.length > 0 && <div className="caption">Under each zone: its score factors from 0 to 100 (100 = no
-            penalty; hover for what each means): Grow = growth momentum, Open = open land, Flat = flat ground, Town = next
-            to town, Farm = farmland contracts, W/S = water & sewer, Ease = easements & canals, Plan = general plan,
-            Fire = fire risk. The score multiplies them, so one low factor pulls a zone down.</div>}
+          {zones.length > 0 && <div className="caption">Each box is a factor from 0 to 100 (hover for what it
+            means). <b>Score = the factors multiplied</b>, e.g. 69 × 93 × 56 … → 33. Zones are ranked by total score
+            (bigger zones count more), so the order can differ from the score.</div>}
           {zones.length > 0 && <table className="rank rec">
             <thead>
-              <tr><th>#</th><th>Zone</th><th className="num">Open acres</th><th className="num" title="Average cell score, 0-100">Score</th></tr>
+              <tr><th>#</th><th>Zone</th><th className="num">Open acres</th><th className="num" title="The zone's factors multiplied, 0-100">Score</th></tr>
             </thead>
             <tbody>
               {zones.map((z) => (
@@ -226,46 +227,36 @@ export default function Report({ stats, places, selected, year, arrows, recommen
                       {(z.plan_nonres_share ?? 0) >= 0.05 ? ` · ${pct(z.plan_nonres_share)} planned industrial` : ""}</div>
                     {z.factors && <FactorStrip f={z.factors} />}</td>
                   <td className="num">{fmt(z.acres)}</td>
-                  <td className="num"><b>{fmt(z.score_sum / Math.max(z.cells, 1))}</b></td>
+                  <td className="num"><b>{fmt(z.score ?? z.score_sum / Math.max(z.cells, 1))}</b></td>
                 </tr>
               ))}
             </tbody>
           </table>}
           <details className="method">
             <summary>How this is calculated, and how well it worked in the past</summary>
-            <p>The county is cut into {recommend.cell_m} m cells. Each cell scores
-              <b> 100 × growth momentum × open land × flat share × next to town × (1 − {recommend.contract_penalty} × farmland
-              contract) × water &amp; sewer × usable land × land use × (1 − fire risk)<sup>{recommend.fire_exponent}</sup></b>.
-              The fire penalty grows faster than the risk: a cell keeps{" "}
-              {[0.1, 0.25, 0.5].map((r) => `${Math.round((1 - r) ** recommend.fire_exponent * 100)}% of its score at ${r * 100}% risk`).join(", ")},
-              and nothing at maximum risk.</p>
-            <ul>
-              <li><b>Growth momentum:</b> how far the cell lies in the path of the growth arrows: 1.5 km ahead
-                of each cluster of new homes, along its direction, weighted by the cluster's size.</li>
-              <li><b>Open land:</b> building footprint under 6% of the cell (6–12% counts half).</li>
-              <li><b>Flat share (terrain):</b> share of the cell with slope ≤ {recommend.terrain.slope_ok_pct}%, plus half the
-                share at {recommend.terrain.slope_ok_pct}–{recommend.terrain.slope_max_pct}% (hillside, costly grading).
-                Steeper land doesn't count. Slope from {recommend.terrain.dem} elevation.</li>
-              <li><b>Next to town:</b> within 1 km of built-up land, fading to zero at 4 km.</li>
-              <li><b>Farmland contract:</b> share of the cell under a Williamson Act or Farmland Security Zone
-                contract (county assessor), which blocks development while it runs. Each year only counts contracts
-                signed by then. A contract in non-renewal that ends within 5 years counts as ending, not as
-                protected. Contracts that ended before today's records aren't in the data, so past years miss some.</li>
-              <li><b>Usable land:</b> land inside power-line and gas-pipeline easements or setbacks (15–75 m either side,
-                wider for higher voltage), water, or a 30 m right-of-way along canals and the Aqueduct doesn't count.</li>
-              <li><b>Land use:</b> land the general plans (c. 2004–2014) reserve for industry loses 80% of its score.
-                Commercial, open space and farmland designations aren't penalised: housing has often been built on them.</li>
-              <li><b>Water and sewer:</b> a cell inside or within{" "}
-                {recommend.utilities?.full_m ?? 500} m of a community water system and of sewer service keeps its full
-                score; access fades to nothing at {((recommend.utilities?.zero_m ?? 3000) / 1000).toFixed(0)} km, where a
-                cell keeps {Math.round((recommend.utilities?.service_floor ?? 0.5) * 100)}%. Service areas are today's
-                boundaries, which past years couldn't know, so the backtest also shows the model without them.
-                Pipe capacity isn't public, so it isn't included.</li>
-              <li><b>Fire risk:</b> {recommend.fire_method} History and detections use a 5 km ring around each
-                cell, and the backtest only uses fires known at the time.</li>
-              <li><b>Excluded:</b> the Delta Primary Zone (Delta Protection Act; {fmt(recommend.excluded.delta_primary_zone_cells)} cells),
-                mostly-water cells, and {fmt(recommend.excluded.too_steep_cells)} cells that are too steep (under 20% flat land).</li>
-            </ul>
+            <p>The county is cut into {recommend.cell_m} m squares. Each square gets 11 factors, each from 0 to 100
+              (100 = nothing holding it back). <b>The score is the factors multiplied together.</b> One weak factor
+              pulls the whole score down; it can't be made up for by another.</p>
+            <table className="rank method-table">
+              <thead><tr><th>Factor</th><th>100 means</th><th>Lower when</th></tr></thead>
+              <tbody>
+                <tr><td><b>Grow</b></td><td>Right where recent building is heading</td><td>Away from the growth arrows</td></tr>
+                <tr><td><b>Open</b></td><td>Mostly unbuilt</td><td>Already built on (warehouse lots count 3× their roof)</td></tr>
+                <tr><td><b>Flat</b></td><td>Slope under {recommend.terrain.slope_ok_pct}%</td><td>Hillside; over {recommend.terrain.slope_max_pct}% counts as 0</td></tr>
+                <tr><td><b>Town</b></td><td>Within 1 km of a town</td><td>Further out; 0 at 4 km</td></tr>
+                <tr><td><b>Farm</b></td><td>No farmland contract</td><td>Under a Williamson Act contract (loses {Math.round(recommend.contract_penalty * 100)}%)</td></tr>
+                <tr><td><b>W/S</b></td><td>Water and sewer within {recommend.utilities?.full_m ?? 500} m</td><td>Further away; 50 at 3 km+</td></tr>
+                <tr><td><b>Power</b></td><td>No power line or gas pipeline</td><td>Inside their easements (15–75 m either side)</td></tr>
+                <tr><td><b>Canal</b></td><td>No water, canal or floodway</td><td>Water, canal right-of-way (30 m) or FEMA floodway</td></tr>
+                <tr><td><b>Flood</b></td><td>Outside the floodplains</td><td>In the 100- or 200-year floodplain (loses {Math.round((recommend.flood_penalty ?? 0.3) * 100)}%)</td></tr>
+                <tr><td><b>Plan</b></td><td>Not planned for industry</td><td>Planned Industrial in the general plan (loses 80%)</td></tr>
+                <tr><td><b>Fire</b></td><td>No wildfire risk</td><td>Hazard zones and past fires nearby; 25% risk → 56</td></tr>
+              </tbody>
+            </table>
+            <p><b>Zones:</b> touching squares scoring {recommend.threshold}+ are joined into a zone. A zone's factors are the
+              averages of its squares, and its score is those factors multiplied. Zones are <b>ranked by total
+              score</b> (all their squares added up), so a big good zone beats a small slightly better one.
+              The Delta Primary Zone, mostly-water squares and very steep land are left out.</p>
             <p><b>Backtest:</b> using only data available at the time, the top 5% of the county picked by the model
               contained this share of the homes actually built in the next five years. Buildings with no recorded year
               only count as built from {recommend.undated_from}, when satellite footprints confirm them. The hazard

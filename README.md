@@ -29,7 +29,7 @@ The fire layers cover all of California.
 You need **Node.js 20+** (and `curl` + `unzip`, which macOS and most Linux systems already have).
 
 ```bash
-./fetch_data.sh   # downloads the pre-built map data (~95 MB) from the GitHub release "data-v8"
+./fetch_data.sh   # downloads the pre-built map data (~95 MB) from the GitHub release "data-v9"
 ./dev.sh          # installs packages on first run, then serves http://localhost:5173
 ```
 
@@ -41,14 +41,14 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ./run_pipeline.sh   # ~15 min; downloads ~1 GB (mostly the Microsoft California footprints)
 ```
 
-Flood data alone (already in `data-v8`): `cd pipeline && ../.venv/bin/python 14_flood.py` (about a minute;
+Flood data alone (already in `data-v9`): `cd pipeline && ../.venv/bin/python 14_flood.py` (about a minute;
 downloads ~15 MB from FEMA and DWR). Re-run it after `09_stats.py` or `13_recommend.py`.
 
 General plan layer alone: `cd pipeline && ../.venv/bin/python 15_general_plans.py` (a few seconds, no download;
 reads `reference/general_plans/`).
 
 After a rebuild, publish new data for everyone by zipping the folder's contents as `map-data.zip`
-and attaching it to a new release (e.g. `data-v9`). Others can then run `./fetch_data.sh data-v9`.
+and attaching it to a new release (e.g. `data-v10`). Others can then run `./fetch_data.sh data-v10`.
 
 `dev.sh` also uses a project-local Node in `.tools/node` if one exists (git-ignored).
 
@@ -93,7 +93,7 @@ the house's year. The last one or two years may be incomplete in assessor record
 | 2020 snapshot | [Microsoft US Building Footprints v2](https://github.com/microsoft/USBuildingFootprints) | ODbL |
 | Fire perimeters | [CAL FIRE FRAP California Fire Perimeters (all)](https://data.ca.gov/dataset/california-fire-perimeters-all) through 2025, plus [NIFC WFIGS](https://data-nifc.opendata.arcgis.com/) perimeters for the current season | FRAP is the state's authoritative record (fires 10+ acres). NIFC's interagency *history* was dropped: it is complete only to ~2019 and missed the 2020 SCU Lightning Complex |
 | Fire detections | [NASA FIRMS](https://firms.modaps.eosdis.nasa.gov/download/) MODIS yearly country files, 2001–2025 | Vegetation fires only (type 0), confidence ≥ 30 |
-| Flood zones | [FEMA National Flood Hazard Layer](https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28), San Joaquin County map 06077C (effective 2009–2016) | Public domain. Floodway, 100-year (A/AE/AH/AO), 500-year and levee-protected areas. Shown for context; not in the score |
+| Flood zones | [FEMA National Flood Hazard Layer](https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28), San Joaquin County map 06077C (effective 2009–2016) | Public domain. Floodway, 100-year (A/AE/AH/AO), 500-year and levee-protected areas. Floodway and 100-year scored |
 | 200-year floodplain | DWR [Best Available Maps](https://ferix.water.ca.gov/arcgis/rest/services/other/BAM/MapServer/11) (SB 5), USACE Sacramento–San Joaquin Comprehensive Study | Coarse, valley-wide study; use as a flag. California requires 200-year protection for new urban development in the Central Valley |
 | General plan land use | California Resources Agency / UC Davis ICE general plans ("rural residential" variant), via [Data Basin](https://databasin.org/datasets/1cda3056a4ad4ece86eb5eda4ef17e82/); see `reference/general_plans/README.md` | Free to use; credit the Resources Agency. Plans of c. 2004–2014, not current zoning. Shown for context; not in the score |
 | Hazard zones | CAL FIRE FHSZ, SRA (2024) + LRA (2025), via a public Sonoma County mirror | Confirm with [CAL FIRE OSFM](https://osfm.fire.ca.gov/) before relying on them |
@@ -173,10 +173,10 @@ non-residential growth is undercounted. Agricultural parcels mostly include a fa
 
 The county is cut into 500 m cells, and each gets
 
-`score = 100 × growth momentum × open land × flat share × next to town × (1 − 0.8 × farmland contract) × water & sewer × usable land × land use × (1 − fire risk)²`
-
-Each zone in the app lists these factors as 0–100 sub-scores (100 = no penalty), so you can see which factor
-separates two zones.
+**The score is 11 factors, each 0 to 100, multiplied together** (as fractions, times 100). One weak factor pulls
+the whole score down; another can't make up for it. A zone's factors are the averages of its 500 m squares, and its
+score is those factors multiplied, so the score in the app always matches the boxes shown (`18_check.py` checks
+this). Zones are *ranked* by total score (all their squares added up), so size counts too.
 
 The fire penalty is progressive (`FIRE_EXPONENT = 2` in `13_recommend.py`): a cell keeps 81% of its score at
 10% fire risk, 56% at 25%, 25% at 50% and 0% at maximum risk. Raise the exponent to be harsher. History: the
@@ -190,7 +190,9 @@ factor was (1 − 0.8 × risk), briefly (1 − 0.4 × risk), then made progressi
 | Next to town | 1 within 1 km of a built-up cell (≥ 10% footprint), falling to 0 at 4 km |
 | Farmland contract | Share of the cell under a Williamson Act or Farmland Security Zone contract (county assessor `WMACT_CATEGORY`), which blocks development while it runs: 9 years after a notice of non-renewal (19 for Farmland Security Zones). `CONTRACT_PENALTY = 0.8`. Each year counts only contracts signed by then (the contract number starts with the year: `71…` = 1971). A contract in non-renewal that ends within the next 5 years counts as *ending*: it isn't penalised, and the app reports it as a sign the owner is leaving the program |
 | Water & sewer | `0.5 + 0.5 × service` (`16_utilities.py`, `SERVICE_FLOOR = 0.5`). Service = average of water and sewer access, each 1 inside or within 500 m of a community water system / sewer service area, falling to 0 at 3 km. A cell far from both keeps half its score |
-| Usable land | `1 − share of the cell lost` to power-line and gas-pipeline easements or setbacks (15 m either side of 60–69 kV lines, 25 m for 115 kV, 40 m for 230 kV, 75 m for 500 kV, 25 m for gas transmission), water, and a 30 m right-of-way along canals and the California Aqueduct (`CANAL_SETBACK_M`) |
+| Power & gas | `1 − share of the cell` in power-line and gas-pipeline easements or setbacks: 15 m either side of 60–69 kV lines, 25 m for 115 kV, 40 m for 230 kV, 75 m for 500 kV, 25 m for gas transmission |
+| Canal (usable land) | `1 − share of the cell` that is water, a 30 m right-of-way along canals and the California Aqueduct (`CANAL_SETBACK_M`), or FEMA floodway |
+| Flood | `1 − 0.3 × share in a floodplain` (FEMA 100-year or DWR 200-year, which covers most levee-protected land; `FLOOD_PENALTY`). One flat penalty backtested as well as separate 100-/200-year penalties, so the simpler rule is used |
 | Land use | `1 − 0.8 × share planned Industrial` in the general plans (c. 2004–2014, `PLAN_PENALTY`). Commercial, open space and agricultural designations aren't penalised: penalising them too lowered the backtest, because much housing has been built on land those plans called something else |
 | Fire risk | 0.5 × FHSZ at the cell (Moderate 0.4 / High 0.7 / Very High 1) + 0.3 × fire history within 5 km + 0.2 × age-weighted wildland detections within 5 km (see [Fire history](#fire-history-frequency-and-recency)) |
 | Excluded | Delta Primary Zone ([DWR boundary](https://gis.water.ca.gov/arcgis/rest/services/Boundaries/i03_Delta_PrimarySecondary_Zones/FeatureServer/0); urban development restricted by the Delta Protection Act) cells > 40% water (Overture water), and cells too steep to build (< 20% of the land under 15% slope) |
@@ -227,14 +229,39 @@ county it picked contained this share of the homes actually built in the followi
 | 2010 | 2011–15 | 62% | 62% | 40% | 5% |
 | 2013 | 2014–18 | 50% | 50% | 29% | 5% |
 | 2016 | 2017–21 | 57% | 56% | 30% | 5% |
-| 2019 | 2020–24 | 48% | 46% | 26% | 5% |
+| 2019 | 2020–24 | 48% | 48% | 26% | 5% |
+| **Average** | | **54%** | **54%** | **32%** | **5%** |
 
-History of this table: 62 / 50 / 57 / 44% before utilities; 66 / 50 / 57 / 46% with utilities; now
-62 / 50 / 57 / 48% after the land-use fix (industrial land, warehouse lots and canals). That fix removed zones on
+History of this table: 62 / 50 / 57 / 44% before utilities; 66 / 50 / 57 / 46% with utilities; 62 / 50 / 57 / 48%
+after the land-use fix (industrial land, warehouse lots and canals); now 61.5 / 49.9 / 57.3 / 48.0% with flood
+scored (backtest-neutral: kept as a real cost, not for accuracy). That fix removed zones on
 industrial land (e.g. beside the Aqueduct south of Mountain House) at the cost of 4 points in 2010 and a gain of
 2 in 2019. Penalising commercial and open-space designations as well cost 2–8 points, so they aren't penalised.
 The water/sewer gain carries some look-ahead: service-area boundaries are today's and have grown into
 subdivisions built since. The edge-of-town rule dropped because warehouse lots now count as built land.
+
+**Does each factor earn its place?** Leaving one factor out at a time (`BACKTEST_ONLY=1 DROP=<factor>
+python 13_recommend.py`), top-5% capture in each test year:
+
+| Leave out | 2010 | 2013 | 2016 | 2019 | Average | Change if left out | Why it's in the score |
+|---|---|---|---|---|---|---|---|
+| Nothing (full model) | 61.5 | 49.9 | 57.3 | 48.0 | 54.2% | | |
+| Growth momentum | 33.5 | 29.3 | 32.1 | 30.0 | 31.2% | -22.9 | The core: where building is heading |
+| Open land | 69.4 | 57.7 | 63.5 | 55.6 | 61.6% | +7.4 | Costs accuracy (homes keep going into partly built squares), but you can't buy built-up land |
+| Flat ground | 61.5 | 49.9 | 57.3 | 48.0 | 54.2% | +0.0 | No effect on the valley floor; keeps steep foothills out |
+| Next to town | 61.3 | 49.7 | 54.1 | 47.1 | 53.0% | -1.1 | Predicts better with it |
+| Farmland contracts | 59.5 | 49.1 | 53.7 | 42.4 | 51.2% | -3.0 | Predicts better with it |
+| Water & sewer | 61.5 | 49.7 | 56.1 | 47.7 | 53.8% | -0.4 | Predicts better with it |
+| Power & gas | 61.5 | 49.9 | 57.3 | 48.0 | 54.2% | +0.0 | Easements can't hold homes |
+| Water, canals & floodway | 62.2 | 49.9 | 57.3 | 47.9 | 54.3% | +0.2 | Water, canals and floodway can't hold homes |
+| Flood | 61.8 | 49.9 | 56.8 | 48.2 | 54.2% | +0.0 | Real cost: raised pads, insurance |
+| Industrial plan | 64.3 | 49.2 | 55.2 | 45.6 | 53.6% | -0.6 | Predicts slightly better with it; keeps industrial land out |
+| Fire risk | 61.6 | 49.9 | 56.9 | 53.2 | 55.4% | +1.2 | Keeps risky land out even where people build (Tracy Hills in 2020–24) |
+
+Growth momentum is the model; dropping it roughly halves the capture. Next to town, farmland, water & sewer and the
+industrial-plan penalty each improve it a little. Open land, power & gas, water & canals, flood and fire don't
+improve the forecast (open land and fire even cost some, because people do build on partly built and fire-prone
+land): they stay because they mark land a builder can't buy, can't build on, or shouldn't.
 
 The 2019 figure is the lowest because much of the 2020–24 building went into fire-prone Tracy Hills, which
 the model deliberately avoids. It ranks where it's *safer* to build, not only where building will happen.
@@ -256,13 +283,11 @@ What the backtest can and can't see:
 Previous figures, for reference: 56 / 48 / 52 / 40% (model) and 35 / 29 / 31 / 25% (edge-of-town rule),
 before the undated-building fix and the farmland factor.
 
-Flood risk is shown but not scored: `14_flood.py` adds each zone's share of land in the FEMA 100-year floodplain,
-floodway, levee-protected areas and the DWR 200-year floodplain (SB 5), visible in the zone list, the zone popup
-and the "Flood zones" map layer. Several top zones around Lathrop sit mostly behind levees and inside the
-200-year floodplain, so a flood penalty is the obvious next step for the score.
+Flood is scored (see the table above): the floodway is unbuildable and floodplain land loses 30%. Several top
+zones around Lathrop sit mostly behind levees inside the 200-year floodplain and score lower for it.
 
-General plan land use is shown (the "General plan land use" layer) but not scored. It is 10–20 years old and is
-not zoning, so use it as a first check on whether housing is planned for an area.
+General plan land use is shown (the "General plan land use" layer); only land planned *Industrial* is scored (it
+loses 80%). The plans are 10–20 years old and are not zoning, so use them as a first check, not an answer.
 
 Not included yet: current zoning and spheres of influence, sewer/water plant capacity, local electric and gas
 distribution (not public), land prices and ownership, and approved but unbuilt subdivisions. Treat zones as places to investigate, not approvals.

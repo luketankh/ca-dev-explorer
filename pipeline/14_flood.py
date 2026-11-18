@@ -1,7 +1,7 @@
 """Step 14: flood hazard (FEMA flood zones + DWR 200-year floodplain), shown on the map and in the reports.
 
-Context only: the where-to-build-next score (13_recommend.py) does NOT use flood yet. This step adds flood
-exposure to the places, the county and every year's build-next zones so people can see it next to the score.
+Prepares the flood data that the where-to-build-next score (13_recommend.py, which runs after this step) uses,
+draws the map layer, and adds flood exposure to the places and the county.
 
 Sources
   FEMA National Flood Hazard Layer (NFHL), Flood Hazard Zones, San Joaquin County map 06077C
@@ -142,45 +142,9 @@ cty = shares(gpd.GeoSeries([county], crs=ALBERS)).iloc[0]
 stats["county"].update({k: float(v) for k, v in cty.items()})
 stats.setdefault("method", {})["flood"] = (
     "Share of land in FEMA flood zones (San Joaquin County map, effective 2009–2016) and in DWR's 200-year "
-    "floodplain (Best Available Maps). Shown for context; not part of the scores.")
+    "floodplain (Best Available Maps). The build-next score penalises the 100-year and 200-year floodplains and "
+    "excludes the floodway (13_recommend.py); the city scores don't use flood.")
 (WEB_DATA / "stats.json").write_text(json.dumps(stats, separators=(",", ":")))
 
-# ---------- build-next zones (every year) ----------
-rz = gpd.read_file(WEB_DATA / "recommend_zones.geojson")
-zs = shares(rz.to_crs(ALBERS).geometry)
-rz = rz.drop(columns=[c for c in rz.columns if c.startswith("flood_")]).join(zs)
-write_geojson(rz, WEB_DATA / "recommend_zones.geojson")
-
-lookup = {(int(r.year), int(r["rank"])): {c: float(r[c]) for c in zs.columns} for _, r in rz.iterrows()}
-rec = json.loads((WEB_DATA / "recommend.json").read_text())
-missing = 0
-for yr, v in rec["by_year"].items():
-    for z in v["zones"]:
-        f = lookup.get((int(yr), int(z["rank"])))
-        missing += f is None
-        z.update(f or {})
-for z in rec.get("zones", []):
-    z.update(lookup.get((int(rec["as_of"]), int(z["rank"])), {}))
-# each region's own zones (13_recommend.py, recommend_region_zones.geojson)
-rpath = WEB_DATA / "recommend_region_zones.geojson"
-if rpath.exists():
-    rr = gpd.read_file(rpath)
-    rs = shares(rr.to_crs(ALBERS).geometry)
-    rr = rr.drop(columns=[c for c in rr.columns if c.startswith("flood_")]).join(rs)
-    write_geojson(rr, rpath)
-    rlook = {(int(r.year), str(r.GEOID), int(r["rank"])): {c: float(r[c]) for c in rs.columns} for _, r in rr.iterrows()}
-    for yr, v in rec["by_year"].items():
-        for geoid, zl in v.get("regional", {}).items():
-            for z in zl:
-                z.update(rlook.get((int(yr), geoid, int(z["rank"])), {}))
-rec["flood_method"] = stats["method"]["flood"]
-(WEB_DATA / "recommend.json").write_text(json.dumps(rec, separators=(",", ":")))
-
-latest = pd.DataFrame(rec["by_year"][str(rec["as_of"])]["zones"])
-print(f"\nFlood exposure of the {rec['as_of']} build-next zones (share of zone area):")
-print(latest[["rank", "label", "flood_100yr_share", "flood_floodway_share", "flood_levee_share", "flood_200yr_share"]]
-      .head(10).to_string(index=False))
-if missing:
-    print(f"WARNING: {missing} zones in recommend.json had no matching polygon")
 print(f"County: {cty['flood_100yr_share']:.0%} of land in the FEMA 100-year floodplain, "
       f"{cty['flood_200yr_share']:.0%} in the DWR 200-year floodplain")
