@@ -5,11 +5,13 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 TAG="${1:-data-v9}"
-URL="https://github.com/luketankh/ca-dev-explorer/releases/download/${TAG}/map-data.zip"
+BASE="https://github.com/luketankh/ca-dev-explorer/releases/download/${TAG}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 echo "Downloading map data ($TAG, ~95 MB) ..."
-curl -fL --progress-bar -o "$tmp/map-data.zip" "$URL"
+# the asset is map-data.zip, or map-data-<version>.zip (e.g. map-data-v9.zip) in some releases
+curl -fL --progress-bar -o "$tmp/map-data.zip" "$BASE/map-data.zip" 2>/dev/null \
+  || curl -fL --progress-bar -o "$tmp/map-data.zip" "$BASE/map-data-${TAG#data-}.zip"
 mkdir -p web/public/data
 unzip -o -q "$tmp/map-data.zip" -d web/public/data
 echo "Map data ($TAG) installed in web/public/data"
