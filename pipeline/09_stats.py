@@ -2,6 +2,7 @@
 
 Output:
   web/public/data/places.geojson  - place polygons with headline metrics (for the map)
+  web/public/data/areas.geojson   - the county's areas (17_areas.py) and their rural remainders, same metrics
   web/public/data/stats.json      - per-place yearly series + county totals (for charts)
 """
 import geopandas as gpd
@@ -30,7 +31,7 @@ res = bp["category"].eq("Residential") & bp["ys"].eq("assessor")
 # Commercial & industrial: measured in footprint square feet (one warehouse = one building otherwise)
 is_ci = bp["category"].isin(["Commercial", "Industrial"])
 ci = is_ci & bp["ys"].eq("assessor")
-bp["sqft"] = bp["area_m2"].fillna(0) * 10.764
+bp["sqft"] = (bp["area_m2"].fillna(0) * 10.764).round()  # whole sq ft per building, so every total adds up exactly
 
 print("Assigning buildings to places ...")
 j = gpd.sjoin(bp[["pt"]], places[["GEOID", "geometry"]], predicate="within", how="left")
@@ -150,6 +151,36 @@ df["risk_score"] = risk(df)
 # 0.5 x risk let fire risk swamp the now fixed-scale growth score (Tracy tied 3%-growth towns).
 df["opportunity_score"] = (df["growth_score"] * (1 - df["risk_score"] / 100)).round(0)
 df["rank"] = df["opportunity_score"].rank(ascending=False, method="min").astype("Int64")
+
+# areas (county subdivisions) and their rural land: same metrics, no ranking (17_areas.py)
+area_rows, area_geoms = [], []
+areas_path = PROCESSED / "areas.geojson"
+if areas_path.exists():
+    print("Areas ...")
+    areas = gpd.read_file(areas_path).to_crs(ALBERS)
+    for _, a in areas.iterrows():
+        inside = gpd.sjoin(bp[["pt"]], gpd.GeoDataFrame(geometry=[a.geometry], crs=ALBERS), predicate="within",
+                           how="inner").index.unique()
+        s = area_stats(a.geometry, bp.index.isin(inside))
+        out_series[a["GEOID"]] = {"name": a["name"], "kind": a["kind"], "yearly": s.pop("_yearly"),
+                                  "yearly_ci_sqft": s.pop("_yearly_ci"), "before": s.pop("_before")}
+        area_rows.append({"GEOID": a["GEOID"], "name": a["name"], "kind": a["kind"], "area": a["area"],
+                          "towns": a["towns"], **s})
+        area_geoms.append(a.geometry)
+        print(f"  {a['name']:<30} bldgs={s['buildings']:>7,} 10yr growth={s['growth_10yr_pct']}%")
+    adf = pd.DataFrame(area_rows)
+    adf["growth_rate_pct"] = (100 * ((1 + adf["growth_10yr_pct"] / 100) ** 0.1 - 1)).round(2)
+    adf["growth_score"] = (100 * (adf["growth_rate_pct"] / (100 * GROWTH_FULL_RATE)).clip(0, 1)).round(0)
+    adf.loc[adf["res_dated"] < 300, "growth_score"] = np.nan
+    adf["risk_score"] = risk(adf)
+    adf["opportunity_score"] = (adf["growth_score"] * (1 - adf["risk_score"] / 100)).round(0)
+    adf["rank"] = None  # areas aren't ranked against towns
+    ag = gpd.GeoDataFrame(adf, geometry=area_geoms, crs=ALBERS).to_crs(4326)
+    ag["geometry"] = ag.geometry.simplify(0.0001)
+    write_geojson(ag, WEB_DATA / "areas.geojson")
+    pa = PROCESSED / "place_areas.csv"
+    if pa.exists():
+        df = df.merge(pd.read_csv(pa, dtype=str), on="GEOID", how="left")
 
 print("County totals ...")
 cstats = area_stats(county.geometry.iloc[0], pd.Series(True, index=bp.index))

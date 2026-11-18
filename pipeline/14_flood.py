@@ -17,7 +17,8 @@ Flood classes (from FLD_ZONE / ZONE_SUBTY)
   (minimal-risk X areas are not drawn)
 
 Inputs  data/raw/fema_flood_zones.parquet, data/raw/dwr_200yr_floodplain.parquet (downloaded if missing),
-        web/public/data/{places.geojson, stats.json, recommend.json, recommend_zones.geojson}
+        web/public/data/{places.geojson, stats.json, recommend.json, recommend_zones.geojson,
+        recommend_region_zones.geojson}
         and the county outline (data/processed/aoi_county.geojson, or web/public/data/counties.geojson).
 Outputs web/public/data/flood.pmtiles             FEMA flood zones, layer "flood"
         web/public/data/flood_200yr.geojson       DWR 200-year floodplain clipped to the county
@@ -129,6 +130,13 @@ fs = shares(places.to_crs(ALBERS).geometry)
 places = places.drop(columns=[c for c in places.columns if c.startswith("flood_")]).join(fs)
 write_geojson(places, WEB_DATA / "places.geojson")
 
+apath = WEB_DATA / "areas.geojson"
+if apath.exists():
+    areas = gpd.read_file(apath)
+    fa = shares(areas.to_crs(ALBERS).geometry)
+    areas = areas.drop(columns=[c for c in areas.columns if c.startswith("flood_")]).join(fa)
+    write_geojson(areas, apath)
+
 stats = json.loads((WEB_DATA / "stats.json").read_text())
 cty = shares(gpd.GeoSeries([county], crs=ALBERS)).iloc[0]
 stats["county"].update({k: float(v) for k, v in cty.items()})
@@ -153,6 +161,18 @@ for yr, v in rec["by_year"].items():
         z.update(f or {})
 for z in rec.get("zones", []):
     z.update(lookup.get((int(rec["as_of"]), int(z["rank"])), {}))
+# each region's own zones (13_recommend.py, recommend_region_zones.geojson)
+rpath = WEB_DATA / "recommend_region_zones.geojson"
+if rpath.exists():
+    rr = gpd.read_file(rpath)
+    rs = shares(rr.to_crs(ALBERS).geometry)
+    rr = rr.drop(columns=[c for c in rr.columns if c.startswith("flood_")]).join(rs)
+    write_geojson(rr, rpath)
+    rlook = {(int(r.year), str(r.GEOID), int(r["rank"])): {c: float(r[c]) for c in rs.columns} for _, r in rr.iterrows()}
+    for yr, v in rec["by_year"].items():
+        for geoid, zl in v.get("regional", {}).items():
+            for z in zl:
+                z.update(rlook.get((int(yr), geoid, int(z["rank"])), {}))
 rec["flood_method"] = stats["method"]["flood"]
 (WEB_DATA / "recommend.json").write_text(json.dumps(rec, separators=(",", ":")))
 

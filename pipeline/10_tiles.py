@@ -16,6 +16,25 @@ def buildings():
                  attribution="Overture Maps Foundation; San Joaquin County Assessor; Microsoft")
 
 
+def buildings_low():
+    """Zoomed-out buildings (z8-11): one dot per few-pixel cell per year built and type, with a count `n`.
+
+    Footprints only exist from z12; this lets the map show where (and when) building happened at county scale.
+    Commercial and industrial are merged into "Commercial", everything else non-residential into "Other",
+    which is all the map's colour coding needs.
+    """
+    g = gpd.read_parquet(PROCESSED / "buildings.parquet")
+    g["geometry"] = g.geometry.representative_point()
+    g["y"] = g["y"].fillna(0).astype(int)
+    g["category"] = g["category"].where(g["category"].isin(["Residential"]), None)
+    g.loc[gpd.read_parquet(PROCESSED / "buildings.parquet")["category"].isin(["Commercial", "Industrial"]).values,
+          "category"] = "Commercial"
+    g["category"] = g["category"].fillna("Other")
+    make_pmtiles(g[["y", "category", "geometry"]], WEB_DATA / "buildings_low.pmtiles", "buildings", 8, 11,
+                 ["y", "category"], aggregate_points_below=12, aggregate_group=["y", "category"], buffer_px=4,
+                 attribution="Overture Maps Foundation; San Joaquin County Assessor; Microsoft")
+
+
 def fire_perimeters():
     g = gpd.read_file(PROCESSED / "fire_perimeters.geojson")
     make_pmtiles(g, WEB_DATA / "fire_perimeters.pmtiles", "fires", 4, 11,
@@ -37,7 +56,7 @@ def fhsz():
                  attribution="CAL FIRE Fire Hazard Severity Zones (SRA 2024, LRA 2025)")
 
 
-LAYERS = {"buildings": buildings, "fire_perimeters": fire_perimeters, "firms": firms, "fhsz": fhsz}
+LAYERS = {"buildings": buildings, "buildings_low": buildings_low, "fire_perimeters": fire_perimeters, "firms": firms, "fhsz": fhsz}
 
 if __name__ == "__main__":
     for name in sys.argv[1:] or LAYERS:

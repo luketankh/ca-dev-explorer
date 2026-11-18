@@ -1,7 +1,10 @@
 export interface PlaceMetrics {
   GEOID: string;
   name: string;
-  kind: "City" | "CDP";
+  /** City / CDP = towns; Area = a Census county division; Rural = an area's land outside its towns. */
+  kind: "City" | "CDP" | "Area" | "Rural";
+  area?: string;   // GEOID of the county division (Area) this region belongs to
+  towns?: string;  // Areas: comma-separated town names
   ci_buildings: number;
   ci_dated_share: number | null;
   ci_sqft_2016_2025: number;
@@ -65,6 +68,15 @@ export interface RecZone {
   flood_500yr_share?: number;
   flood_levee_share?: number;
   flood_200yr_share?: number;
+  easement_share?: number; // share of the zone inside power-line / gas-pipeline easements
+  water_access?: number;   // 0-1: 1 = inside or within 500 m of a community water system
+  sewer_access?: number;   // 0-1: same for sewer service
+  county_rank?: number | null;
+  /** Each score factor 0-100 (100 = no penalty), averaged over the zone's cells. */
+  factors?: Record<string, number>;
+  lost_share?: number;
+  plan_nonres_share?: number;
+  plan_housing_share?: number; // regional zones: the county-wide rank of the zone it overlaps, if any
   lon: number;
   lat: number;
 }
@@ -72,6 +84,8 @@ export interface RecZone {
 export interface RecYear {
   window: string;
   zones: RecZone[];
+  /** Each place's own top zones (GEOID -> zones ranked within the place). */
+  regional?: Record<string, RecZone[]>;
   next: { period: string; complete: boolean; homes_built: number; in_zones_pct: number | null;
     zone_area_pct: number; top5_pct: number | null } | null;
 }
@@ -85,11 +99,12 @@ export interface Recommend {
   threshold: number;
   zones: RecZone[];
   backtest: { as_of: number; predicts: string; homes_built: number; top_area_pct: number;
-    captured_pct: number; baseline_pct: number }[];
+    captured_pct: number; baseline_pct: number; no_utilities_pct?: number; lines_only_pct?: number }[];
   excluded: { delta_primary_zone_cells: number; water_cells: number; too_steep_cells: number };
   terrain: { slope_ok_pct: number; slope_max_pct: number; dem: string };
   fire_exponent: number;
   contract_penalty: number;
+  utilities?: { service_floor: number; full_m: number; zero_m: number; region_buffer_m: number };
   undated_from: number;
   fire_half_life: number;
   fire_method: string;

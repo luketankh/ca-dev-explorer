@@ -8,8 +8,8 @@ export const DEFAULT_PLACE = "Mountain House";
 const base = import.meta.env.BASE_URL;
 export const DATA = {
   buildings: `pmtiles://${location.origin}${base}data/buildings.pmtiles`,
+  buildingsLow: `pmtiles://${location.origin}${base}data/buildings_low.pmtiles`,
   fires: `pmtiles://${location.origin}${base}data/fire_perimeters.pmtiles`,
-  firms: `pmtiles://${location.origin}${base}data/firms.pmtiles`,
   fhsz: `pmtiles://${location.origin}${base}data/fhsz.pmtiles`,
   places: `${base}data/places.geojson`,
   stats: `${base}data/stats.json`,
@@ -20,6 +20,12 @@ export const DATA = {
   flood: `pmtiles://${location.origin}${base}data/flood.pmtiles`,
   flood200: `${base}data/flood_200yr.geojson`,
   plans: `${base}data/general_plans.geojson`,
+  // latest USDA NAIP aerial imagery via USGS The National Map (public domain, no key); one vintage, not by year
+  aerial: "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}",
+  areas: `${base}data/areas.geojson`,
+  recRegionZones: `${base}data/recommend_region_zones.geojson`,
+  utilityLines: `${base}data/utility_lines.geojson`,
+  serviceAreas: `${base}data/service_areas.geojson`,
 };
 
 
@@ -88,6 +94,11 @@ export const COLORS = {
     [100, "#0d6b49"],
   ] as [number, string][],
   suitDark: "#0d6b49",
+  zoneHighlight: "#1baf7a", // glow around the zone picked in the report
+  powerLine: "#2f3640",      // electric transmission lines (charcoal)
+  gasLine: "#6d5bd0",        // natural gas transmission pipelines (dashed)
+  waterService: "#1593b8",   // community water system service areas
+  sewerService: "#6b8e23",   // sewer service areas (dashed outline)
   // flood: one cyan ordinal ramp, darker = more likely to flood (kept off the building blues and the aqua suitability ramp)
   flood: {
     floodway: "#0a5f7a",
